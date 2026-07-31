@@ -1,0 +1,20 @@
+[package]
+name = "ai-session-hub"
+version = "0.1.0"
+edition = "2021"
+description = "跨 AI 工具（Claude Code / Codex / Kiro / Gemini / OpenCode）的会话检索、上下文回溯与跨工具交接"
+license = "MIT"
+
+[[bin]]
+name = "ash"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1.0"
+chrono = "0.4"
+rusqlite = { version = "0.31", features = ["bundled"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+[profile.release]
+strip = true
