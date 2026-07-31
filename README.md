@@ -21,6 +21,8 @@
 - **换工具继续聊**：跨工具无法迁移原生会话（历史格式、tool_use ID 体系、模型都不通），所以走
   「摘要 + 最近原文」的交接包，再给出目标工具的启动命令，第一句话就带上下文。同工具则直接给
   原生 `--resume` 命令（无损）。
+- **知道谁在忙**：某个会话是进行中、在等我确认、还是已经结束？哪些会话我漏回了？
+  `session_status` / `session_active` 实时判定，避免去打扰正在干活的终端。
 
 ## 安装
 
@@ -41,6 +43,9 @@ ash read kiro:b2daab07 --tail 20 --only-text --budget 8000
 ash digest kiro:b2daab07                  # 结构化摘要
 ash handoff kiro:b2daab07 --to claude --note "继续补文档"
 ash resume codex:019fb745 --prompt "接着上文继续"
+ash status kiro:b2daab07                  # 这个会话现在什么状态
+ash active                                # 谁在忙 / 谁在等我回话
+ash list --state 进行中                    # 按状态过滤（中英文都认）
 ash stats
 ```
 
@@ -62,8 +67,31 @@ command = "/Users/<you>/.local/bin/ash"
 args = ["mcp"]
 ```
 
-暴露 8 个工具：`session_search`、`session_list`、`session_read`、`session_digest`、
-`session_handoff`、`session_resume_cmd`、`session_sync`、`session_stats`。
+暴露 10 个工具：`session_search`、`session_list`、`session_status`、`session_active`、
+`session_read`、`session_digest`、`session_handoff`、`session_resume_cmd`、`session_sync`、
+`session_stats`。
+
+## 会话状态
+
+| state | 含义 | 判定依据 |
+| --- | --- | --- |
+| `running` 进行中 | AI 正在跑 | 90 秒内有活动，或提问/工具调用刚发起 |
+| `awaiting_approval` 待我确认工具执行 | 卡在工具审批 | 工具调用超过 90 秒没结果且进程还在 |
+| `awaiting_input` 待我回复 | AI 在等我回话 | 最后一句是提问/请确认，且会话仍开着 |
+| `interrupted` 已被打断 | 我打断过 | 最后一条带中断标记 |
+| `idle` 空闲可续聊 | 进程还开着但没在等我 | 有持有进程、最后是 AI 交付 |
+| `done` 已完成 | 已收尾 | 进程已退出且无遗留信号 |
+| `unfinished` 已结束但有遗留 | 没聊完 | 进程已退出，但有待办信号／提问没人回／工具没走完 |
+
+状态**不入库**（易失，落库必然读到陈旧值），每次实时算：一次 `ps` 快照 + 读 Kiro 锁目录 + 单会话
+最后一条消息。判定信号按可靠性分三层：
+
+1. **Kiro 的 `.lock`**（含 `pid` / `started_at`）→ 能精确知道会话被哪个进程持有；
+2. **进程命令行**（`--resume-id` / `resume <id>`）→ 显式恢复的会话能对上号；
+3. **对话形态 + 活动时间** → Codex / Claude 写完日志就关 fd（`lsof` 抓不到持有者），只能推断。
+
+活动时间取「最后消息时间」与「会话文件 mtime」的较新者：Kiro 的助手消息和工具结果都不带
+timestamp，只看消息时间会把正在连续跑工具的会话误判成卡住。
 
 ## 设计要点
 

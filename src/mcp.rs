@@ -123,6 +123,14 @@ fn call_tool(index: &mut Index, params: &Value) -> Result<String> {
             let (markdown, meta) = ops::read(index, &parsed)?;
             Ok(format!("{markdown}\n\n---\n{}", pretty(&meta)))
         }
+        "session_status" => {
+            let parsed: ops::UidArgs = serde_json::from_value(args)?;
+            Ok(pretty(&ops::status(index, &parsed)?))
+        }
+        "session_active" => {
+            let parsed: ops::ListArgs = serde_json::from_value(args)?;
+            Ok(pretty(&ops::active(index, &parsed)?))
+        }
         "session_digest" => {
             let parsed: ops::UidArgs = serde_json::from_value(args)?;
             let (markdown, _) = ops::digest(index, &parsed)?;
@@ -189,7 +197,32 @@ fn tool_definitions() -> Vec<Value> {
                     "cwd": { "type": "string" },
                     "since": { "type": "string", "description": "7d / 36h / 2026-07-30 / 时间戳" },
                     "title": { "type": "string", "description": "标题包含的关键字" },
+                    "state": {
+                        "type": "string",
+                        "description": "按状态过滤，支持 running/awaiting_input/awaiting_approval/interrupted/idle/done/unfinished，也接受中文：进行中/待我回复/待确认/已被打断/空闲/已完成/未完成"
+                    },
                     "limit": { "type": "integer", "description": "默认 20" }
+                }
+            }
+        }),
+        json!({
+            "name": "session_status",
+            "description": "判断某个会话现在是什么状态：进行中(running)/待我回复(awaiting_input)/待我确认工具执行(awaiting_approval)/已被打断(interrupted)/空闲可续聊(idle)/已完成(done)/已结束但有遗留(unfinished)，并给出判定依据与下一步建议。用户问'那个会话跑完了吗''还在跑吗''要不要我确认'时用它。",
+            "inputSchema": {
+                "type": "object",
+                "properties": { "uid": { "type": "string" } },
+                "required": ["uid"]
+            }
+        }),
+        json!({
+            "name": "session_active",
+            "description": "总览当前还开着的会话：busy=正在跑或等批准（别打扰），waiting_for_me=在等我回话，open_but_idle=进程还开着但空闲。用户问'现在哪些 AI 在干活''codex 忙不忙''有没有在等我确认的'时用它。",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "tool": { "type": "string", "enum": tool_enum },
+                    "cwd": { "type": "string" },
+                    "since": { "type": "string", "description": "回看范围，默认 2d" }
                 }
             }
         }),
@@ -271,7 +304,7 @@ mod tests {
     #[test]
     fn every_tool_has_name_and_schema() {
         let tools = tool_definitions();
-        assert_eq!(tools.len(), 8);
+        assert_eq!(tools.len(), 10);
         for tool in tools {
             assert!(tool.get("name").and_then(Value::as_str).is_some());
             assert!(tool.get("description").and_then(Value::as_str).is_some());

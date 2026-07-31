@@ -12,6 +12,9 @@ use serde_json::{json, Value};
 /// 距上次同步超过这个间隔就先增量刷一遍（查询前自动保鲜）
 const AUTO_SYNC_INTERVAL_MS: i64 = 60_000;
 
+/// 需要实时判定状态时，最多扫多少个候选会话（状态无法在 SQL 里过滤）
+const STATE_SCAN_LIMIT: usize = 200;
+
 fn default_limit() -> usize {
     20
 }
@@ -38,6 +41,9 @@ pub struct ListArgs {
     pub since: Option<String>,
     pub title: Option<String>,
     pub limit: Option<usize>,
+    /// 状态过滤：running / awaiting_input / awaiting_approval / interrupted / idle / done / unfinished
+    /// 也接受中文（进行中 / 待我回复 / 待确认 / 已完成 …）
+    pub state: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -128,17 +134,39 @@ pub fn search(index: &mut Index, args: &SearchArgs) -> Result<Value> {
 
 pub fn list(index: &mut Index, args: &ListArgs) -> Result<Value> {
     ensure_fresh(index)?;
+    let limit = args.limit.unwrap_or_else(default_limit);
+    let wanted = match args.state.as_deref() {
+        Some(raw) if !raw.trim().is_empty() => Some(
+            crate::liveness::SessionState::parse(raw)
+                .ok_or_else(|| anyhow!("无法识别的状态 {raw}（可用：进行中/待我回复/待确认/已被打断/空闲/已完成/未完成）"))?,
+        ),
+        _ => None,
+    };
     let options = ListOptions {
         tool: normalize_tool(args.tool.as_deref())?,
         cwd: args.cwd.clone(),
         since: parse_time(args.since.as_deref())?,
         title_like: args.title.clone(),
-        limit: args.limit.unwrap_or_else(default_limit),
+        // 状态是实时算的，SQL 里没法过滤，只能先多捞候选再筛
+        limit: if wanted.is_some() {
+            (limit * 10).clamp(50, STATE_SCAN_LIMIT)
+        } else {
+            limit
+        },
     };
     let sessions = index.list_sessions(&options)?;
-    Ok(json!({
-        "count": sessions.len(),
-        "sessions": sessions.iter().map(|session| json!({
+
+    let probe = crate::liveness::LivenessProbe::capture();
+    let mut rows = Vec::new();
+    for session in &sessions {
+        let last = index.last_message(&session.uid)?;
+        let status = probe.evaluate(session, &last);
+        if let Some(wanted) = wanted {
+            if status.state != wanted.as_str() {
+                continue;
+            }
+        }
+        rows.push(json!({
             "uid": session.uid,
             "tool": session.tool,
             "title": session.title,
@@ -146,9 +174,108 @@ pub fn list(index: &mut Index, args: &ListArgs) -> Result<Value> {
             "created": fmt_ts(session.created_at),
             "updated": fmt_ts(session.updated_at),
             "messages": session.message_count,
+            "state": status.state,
+            "state_label": status.label,
+            "busy": status.busy,
             "resume": session.resume_command,
-        })).collect::<Vec<_>>(),
+        }));
+        if rows.len() >= limit {
+            break;
+        }
+    }
+    Ok(json!({
+        "count": rows.len(),
+        "scanned": sessions.len(),
+        "state_filter": wanted.map(|state| state.as_str()),
+        "sessions": rows,
     }))
+}
+
+/// 查询单个会话的状态与判定依据
+pub fn status(index: &mut Index, args: &UidArgs) -> Result<Value> {
+    ensure_fresh(index)?;
+    let uid = resolve(index, &args.uid)?;
+    let session = index
+        .get_session(&uid)?
+        .ok_or_else(|| anyhow!("未找到会话 {uid}"))?;
+    let last = index.last_message(&uid)?;
+    let probe = crate::liveness::LivenessProbe::capture();
+    let status = probe.evaluate(&session, &last);
+    let mut value = serde_json::to_value(&status)?;
+    if let Some(object) = value.as_object_mut() {
+        object.insert("updated".to_string(), json!(fmt_ts(session.updated_at)));
+        object.insert("messages".to_string(), json!(session.message_count));
+        object.insert("resume".to_string(), json!(session.resume_command));
+        object.insert(
+            "advice".to_string(),
+            json!(advice_for(status.state, &session.tool)),
+        );
+    }
+    Ok(value)
+}
+
+/// 当前"还开着"的会话总览：谁在忙、谁在等我回话
+pub fn active(index: &mut Index, args: &ListArgs) -> Result<Value> {
+    ensure_fresh(index)?;
+    let options = ListOptions {
+        tool: normalize_tool(args.tool.as_deref())?,
+        cwd: args.cwd.clone(),
+        // 只看最近两天，更早的会话不可能还挂着
+        since: parse_time(args.since.as_deref().or(Some("2d")))?,
+        title_like: None,
+        limit: STATE_SCAN_LIMIT,
+    };
+    let sessions = index.list_sessions(&options)?;
+    let probe = crate::liveness::LivenessProbe::capture();
+
+    let mut busy = Vec::new();
+    let mut waiting = Vec::new();
+    let mut open = Vec::new();
+    for session in &sessions {
+        let last = index.last_message(&session.uid)?;
+        let status = probe.evaluate(session, &last);
+        let entry = json!({
+            "uid": session.uid,
+            "tool": session.tool,
+            "title": session.title,
+            "cwd": session.cwd,
+            "updated": fmt_ts(session.updated_at),
+            "state": status.state,
+            "state_label": status.label,
+            "idle_seconds": status.evidence.idle_seconds,
+            "pid": status.evidence.holder_pid,
+            "reason": status.evidence.reason,
+            "resume": session.resume_command,
+        });
+        if status.busy {
+            busy.push(entry);
+        } else if status.state == "awaiting_input" || status.state == "interrupted" {
+            waiting.push(entry);
+        } else if status.evidence.process_alive {
+            open.push(entry);
+        }
+    }
+    Ok(json!({
+        "busy": busy,
+        "waiting_for_me": waiting,
+        "open_but_idle": open,
+        "hint": "busy 里的会话正在跑或在等批准，别去打扰；waiting_for_me 是在等你回话的",
+    }))
+}
+
+/// 针对状态给出下一步建议，让调用方不用自己猜
+fn advice_for(state: &str, tool: &str) -> String {
+    match state {
+        "running" => format!("{tool} 正在干活，先别插手；要看进展用 session_read --tail"),
+        "awaiting_approval" => {
+            format!("{tool} 卡在工具执行/审批上，去那个终端确认一下")
+        }
+        "awaiting_input" => "AI 在等你回话，可以用 session_resume_cmd 拿到续聊命令".to_string(),
+        "interrupted" => "上次被你打断了，可以续聊并说明要从哪继续".to_string(),
+        "idle" => "会话还开着，直接接着聊即可".to_string(),
+        "unfinished" => "会话结束了但有遗留，建议先看 session_digest 的未完成事项".to_string(),
+        _ => "会话已收尾，无需处理".to_string(),
+    }
 }
 
 /// 读会话正文，返回 (Markdown 文本, 结构化元信息)

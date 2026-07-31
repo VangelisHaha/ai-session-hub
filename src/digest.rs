@@ -20,8 +20,8 @@ const SHELL_TOOLS: [&str; 7] = [
     "container.exec",
 ];
 
-/// 待办信号词
-const OPEN_SIGNALS: [&str; 8] = [
+/// 待办信号词（活跃度判定也复用这一份）
+pub const OPEN_SIGNALS: [&str; 8] = [
     "待确认",
     "待补",
     "下一步",

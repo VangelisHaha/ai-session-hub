@@ -8,6 +8,7 @@ mod adapters;
 mod digest;
 mod handoff;
 mod index;
+mod liveness;
 mod mcp;
 mod model;
 mod ops;
@@ -24,7 +25,9 @@ const USAGE: &str = r#"ai-session-hub (ash) — 跨 AI 工具会话检索与交�
   ash mcp                                以 MCP server 模式运行（stdio）
   ash sync [--full] [--tool <t>]         刷新索引
   ash search <关键词...> [选项]           跨工具检索
-  ash list [选项]                        列出会话
+  ash list [选项] [--state 进行中]        列出会话（可按状态过滤）
+  ash status <uid>                       查会话是进行中/待确认/已完成
+  ash active [--tool codex]              还开着的会话：谁在忙、谁在等我回话
   ash read <uid> [选项]                  读会话正文
   ash digest <uid>                       结构化摘要
   ash handoff <uid> --to <tool> [--note <文本>] [--tail N]
@@ -97,16 +100,23 @@ fn run() -> Result<()> {
         }
         "list" => {
             let mut index = Index::open()?;
-            let result = ops::list(
-                &mut index,
-                &ops::ListArgs {
-                    tool: flags.get("tool").cloned().flatten(),
-                    cwd: flags.get("cwd").cloned().flatten(),
-                    since: flags.get("since").cloned().flatten(),
-                    title: flags.get("title").cloned().flatten(),
-                    limit: number(&flags, "limit"),
-                },
-            )?;
+            let result = ops::list(&mut index, &list_args(&flags))?;
+            println!("{}", serde_json::to_string_pretty(&result)?);
+            Ok(())
+        }
+        "status" => {
+            let uid = positional
+                .first()
+                .cloned()
+                .ok_or_else(|| anyhow!("status 需要会话 uid"))?;
+            let mut index = Index::open()?;
+            let result = ops::status(&mut index, &ops::UidArgs { uid })?;
+            println!("{}", serde_json::to_string_pretty(&result)?);
+            Ok(())
+        }
+        "active" => {
+            let mut index = Index::open()?;
+            let result = ops::active(&mut index, &list_args(&flags))?;
             println!("{}", serde_json::to_string_pretty(&result)?);
             Ok(())
         }
@@ -198,6 +208,17 @@ fn run() -> Result<()> {
 }
 
 type Flags = HashMap<String, Option<String>>;
+
+fn list_args(flags: &Flags) -> ops::ListArgs {
+    ops::ListArgs {
+        tool: flags.get("tool").cloned().flatten(),
+        cwd: flags.get("cwd").cloned().flatten(),
+        since: flags.get("since").cloned().flatten(),
+        title: flags.get("title").cloned().flatten(),
+        limit: number(flags, "limit"),
+        state: flags.get("state").cloned().flatten(),
+    }
+}
 
 /// 极简参数解析：`--key value` / `--key`（布尔）/ 其余为位置参数
 fn parse_args(args: &[String]) -> (Vec<String>, Flags) {
