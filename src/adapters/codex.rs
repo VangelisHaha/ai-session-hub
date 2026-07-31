@@ -99,13 +99,12 @@ impl Adapter for CodexAdapter {
                             .map(str::to_string);
                     }
                 }
-                "turn_context"
-                    if cwd.is_none() => {
-                        cwd = payload
-                            .get("cwd")
-                            .and_then(Value::as_str)
-                            .map(str::to_string);
-                    }
+                "turn_context" if cwd.is_none() => {
+                    cwd = payload
+                        .get("cwd")
+                        .and_then(Value::as_str)
+                        .map(str::to_string);
+                }
                 "response_item" => {
                     let payload_type = payload.get("type").and_then(Value::as_str).unwrap_or("");
                     match payload_type {

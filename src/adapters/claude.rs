@@ -94,13 +94,12 @@ impl Adapter for ClaudeAdapter {
                 continue;
             };
             match content {
-                Value::String(text)
-                    if !text.trim().is_empty() => {
-                        if role == ROLE_USER && title.is_none() && looks_like_title(text) {
-                            title = first_line_summary(text, 120);
-                        }
-                        messages.push(Message::text(role, text.clone(), ts));
+                Value::String(text) if !text.trim().is_empty() => {
+                    if role == ROLE_USER && title.is_none() && looks_like_title(text) {
+                        title = first_line_summary(text, 120);
                     }
+                    messages.push(Message::text(role, text.clone(), ts));
+                }
                 Value::Array(blocks) => {
                     for block in blocks {
                         let block_type = block.get("type").and_then(Value::as_str).unwrap_or("");

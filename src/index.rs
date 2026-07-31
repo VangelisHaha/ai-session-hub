@@ -696,6 +696,60 @@ impl Index {
         Ok(rows)
     }
 
+    /// 取会话最后一条消息的形态（含工具调用/结果），用于活跃度判定。
+    ///
+    /// 状态易失，所以不落库、每次实时读；`messages(session_uid, seq)` 上有索引，单会话是毫秒级。
+    pub fn last_message(&self, uid: &str) -> Result<crate::liveness::LastMessage> {
+        let row = self
+            .conn
+            .query_row(
+                "SELECT role, kind, tool_name, substr(content, 1, 600), ts
+                 FROM messages WHERE session_uid = ?1
+                 ORDER BY seq DESC LIMIT 1",
+                [uid],
+                |row| {
+                    Ok((
+                        row.get::<_, Option<String>>(0)?,
+                        row.get::<_, Option<String>>(1)?,
+                        row.get::<_, Option<String>>(2)?,
+                        row.get::<_, Option<String>>(3)?,
+                        row.get::<_, Option<i64>>(4)?,
+                    ))
+                },
+            )
+            .optional()?;
+
+        // 未完成信号只看最近几条助手正文，避免为了状态判定跑整会话摘要
+        let mut stmt = self.conn.prepare(
+            "SELECT content FROM messages
+             WHERE session_uid = ?1 AND role = 'assistant' AND kind = 'text'
+             ORDER BY seq DESC LIMIT 3",
+        )?;
+        let has_open_items = stmt
+            .query_map([uid], |row| row.get::<_, String>(0))?
+            .flatten()
+            .any(|content| {
+                crate::digest::OPEN_SIGNALS
+                    .iter()
+                    .any(|signal| content.contains(signal))
+            });
+
+        Ok(match row {
+            Some((role, kind, tool_name, head, ts)) => crate::liveness::LastMessage {
+                role,
+                kind,
+                tool_name,
+                head,
+                ts,
+                has_open_items,
+            },
+            None => crate::liveness::LastMessage {
+                has_open_items,
+                ..Default::default()
+            },
+        })
+    }
+
     pub fn stats(&self) -> Result<Vec<(String, i64, i64)>> {
         let mut stmt = self.conn.prepare(
             "SELECT s.tool, COUNT(DISTINCT s.uid), COALESCE(SUM(s.message_count), 0)

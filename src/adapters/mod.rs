@@ -101,10 +101,12 @@ pub fn collect_files(root: &Path, ext: &str, out: &mut Vec<PathBuf>) {
         let path = entry.path();
         match entry.file_type() {
             Ok(file_type) if file_type.is_dir() => collect_files(&path, ext, out),
-            Ok(file_type) if file_type.is_file()
-                && path.extension().and_then(|e| e.to_str()) == Some(ext) => {
-                    out.push(path);
-                }
+            Ok(file_type)
+                if file_type.is_file()
+                    && path.extension().and_then(|e| e.to_str()) == Some(ext) =>
+            {
+                out.push(path);
+            }
             _ => {}
         }
     }
