@@ -154,10 +154,12 @@ pub fn list(index: &mut Index, args: &ListArgs) -> Result<Value> {
             limit
         },
     };
+    let scan_limit = options.limit;
     let sessions = index.list_sessions(&options)?;
 
     let probe = crate::liveness::LivenessProbe::capture();
     let mut rows = Vec::new();
+    let mut filled = false;
     for session in &sessions {
         let last = index.last_message(&session.uid)?;
         let status = probe.evaluate(session, &last);
@@ -180,15 +182,28 @@ pub fn list(index: &mut Index, args: &ListArgs) -> Result<Value> {
             "resume": session.resume_command,
         }));
         if rows.len() >= limit {
+            filled = true;
             break;
         }
     }
-    Ok(json!({
+
+    // 状态过滤是先捞候选再逐个实时判定，扫完候选仍凑不满 limit 时结果可能不完整。
+    // 不说明的话用户会把"扫描范围内只有这些"当成"全部只有这些"。
+    let truncated = wanted.is_some() && !filled && sessions.len() >= scan_limit;
+    let mut result = json!({
         "count": rows.len(),
         "scanned": sessions.len(),
         "state_filter": wanted.map(|state| state.as_str()),
         "sessions": rows,
-    }))
+    });
+    if truncated {
+        result["incomplete"] = json!(true);
+        result["note"] = json!(format!(
+            "状态需实时判定，本次只扫描了最近 {} 个会话且已扫满；可能还有更多符合条件的会话，可用 --since 缩小范围或提高 --limit",
+            sessions.len()
+        ));
+    }
+    Ok(result)
 }
 
 /// 查询单个会话的状态与判定依据
@@ -206,10 +221,11 @@ pub fn status(index: &mut Index, args: &UidArgs) -> Result<Value> {
         object.insert("updated".to_string(), json!(fmt_ts(session.updated_at)));
         object.insert("messages".to_string(), json!(session.message_count));
         object.insert("resume".to_string(), json!(session.resume_command));
-        object.insert(
-            "advice".to_string(),
-            json!(advice_for(status.state, &session.tool)),
-        );
+        let mut advice = advice_for(status.state, &session.tool);
+        if !status.evidence.process_info_available {
+            advice.push_str("（注意：本机拿不到进程列表，无法确认会话是否还开着，状态可能偏保守）");
+        }
+        object.insert("advice".to_string(), json!(advice));
     }
     Ok(value)
 }
@@ -251,16 +267,26 @@ pub fn active(index: &mut Index, args: &ListArgs) -> Result<Value> {
             busy.push(entry);
         } else if status.state == "awaiting_input" || status.state == "interrupted" {
             waiting.push(entry);
-        } else if status.evidence.process_alive {
+        } else if status.evidence.process_alive || status.state == "idle" {
+            // 进程信息不可用时 process_alive 恒为 false，此时 idle 就是"还可能开着"的最强信号；
+            // 只看 process_alive 会让这一组永远为空。
             open.push(entry);
         }
     }
-    Ok(json!({
+    let process_info_available = probe.process_info_available();
+    let mut result = json!({
         "busy": busy,
         "waiting_for_me": waiting,
         "open_but_idle": open,
         "hint": "busy 里的会话正在跑或在等批准，别去打扰；waiting_for_me 是在等你回话的",
-    }))
+    });
+    if !process_info_available {
+        result["process_info_available"] = json!(false);
+        result["note"] = json!(
+            "本机拿不到进程列表，无法确认哪些会话还开着：busy / open_but_idle 仅按对话形态与活动时间推断，可能不准"
+        );
+    }
+    Ok(result)
 }
 
 /// 针对状态给出下一步建议，让调用方不用自己猜
@@ -413,13 +439,31 @@ pub fn stats(index: &Index) -> Result<Value> {
     }))
 }
 
+/// 前缀歧义时最多列出几个候选供用户挑选
+const UID_CANDIDATE_LIMIT: usize = 5;
+
 fn resolve(index: &Index, input: &str) -> Result<String> {
-    if input.trim().is_empty() {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
         return Err(anyhow!("uid 不能为空"));
     }
-    index
-        .resolve_uid(input.trim())?
-        .ok_or_else(|| anyhow!("未找到会话 {input}（可先用 session_search / session_list 定位）"))
+    let candidates = index.resolve_uid_candidates(trimmed, UID_CANDIDATE_LIMIT)?;
+    match candidates.len() {
+        0 => Err(anyhow!(
+            "未找到会话 {input}（可先用 session_search / session_list 定位）"
+        )),
+        1 => Ok(candidates.into_iter().next().unwrap()),
+        // 静默选一个可能读错会话，甚至把错误的上下文交接出去
+        _ => Err(anyhow!(
+            "前缀 {input} 命中 {} 个会话，请补长前缀或用完整 uid：\n{}",
+            candidates.len(),
+            candidates
+                .iter()
+                .map(|uid| format!("  - {uid}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        )),
+    }
 }
 
 fn normalize_tool(tool: Option<&str>) -> Result<Option<String>> {
@@ -513,13 +557,17 @@ pub fn focus_snippet(snippet: &str, terms: &[String]) -> String {
     out
 }
 
-/// 关键词在文本中的字符位置（取最早命中的那个）
+/// 关键词在文本中的**字符**位置（取最早命中的那个）。
+///
+/// `str::find` 返回字节偏移，而调用方按 `Vec<char>` 下标切窗口，
+/// 中文下两者差三倍，必须显式换算。`find` 保证落在字符边界上，故切片安全。
 fn first_term_position(text: &str, terms: &[String]) -> Option<usize> {
-    terms
+    let byte_index = terms
         .iter()
         .filter_map(|term| text.find(term.as_str()))
-        .min()
-        .map(|byte_index| text[..byte_index].chars().count())
+        .min()?;
+    debug_assert!(text.is_char_boundary(byte_index));
+    Some(text[..byte_index].chars().count())
 }
 
 pub fn fmt_ts(ts: Option<i64>) -> Option<String> {

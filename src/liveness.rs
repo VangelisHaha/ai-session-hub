@@ -89,6 +89,8 @@ pub struct StateEvidence {
     pub holder_pid: Option<i32>,
     /// 进程是否仍存活
     pub process_alive: bool,
+    /// 本机能否拿到进程列表。false 时 process_alive 无意义，状态判定已降级
+    pub process_info_available: bool,
     /// 距最后一次活动的秒数（取消息时间与会话文件 mtime 的较新者）
     pub idle_seconds: Option<i64>,
     /// idle 的计算基准：message_ts 或 file_mtime
@@ -128,6 +130,8 @@ pub struct LastMessage {
 pub struct LivenessProbe {
     /// pid -> 命令行
     processes: HashMap<i32, String>,
+    /// 进程信息是否可用；false 时不能把"查不到进程"当成"进程已退出"
+    process_info_available: bool,
     /// Kiro session_id -> pid
     kiro_locks: HashMap<String, i32>,
     /// 命令行里显式带出的会话 ID -> pid
@@ -166,13 +170,20 @@ const PENDING_WINDOW_SECONDS: i64 = 600;
 
 impl LivenessProbe {
     pub fn capture() -> Self {
+        let snapshot = snapshot_processes();
         Self {
-            processes: snapshot_processes(),
+            processes: snapshot.processes,
+            process_info_available: snapshot.available,
             kiro_locks: read_kiro_locks(),
             resumed_sessions: HashMap::new(),
             now_ms: chrono::Utc::now().timestamp_millis(),
         }
         .with_resumed_sessions()
+    }
+
+    /// 进程信息是否可用，供上层在输出里标注判定可信度
+    pub fn process_info_available(&self) -> bool {
+        self.process_info_available
     }
 
     /// 从命令行里抠出 `--resume-id <id>` / `resume <id>` / `--resume <id>`
@@ -196,9 +207,13 @@ impl LivenessProbe {
 
     pub fn evaluate(&self, session: &SessionRow, last: &LastMessage) -> SessionStatus {
         let holder_pid = self.holder_pid(session);
-        let process_alive = holder_pid
-            .map(|pid| self.processes.contains_key(&pid))
-            .unwrap_or(false);
+        let liveness = match (self.process_info_available, holder_pid) {
+            // 探测不到进程列表：无法证明会话已结束，判定按"未知"走保守分支
+            (false, _) => ProcessLiveness::Unknown,
+            (true, Some(pid)) if self.processes.contains_key(&pid) => ProcessLiveness::Alive,
+            (true, _) => ProcessLiveness::Dead,
+        };
+        let process_alive = liveness == ProcessLiveness::Alive;
         // Kiro 的助手消息与工具结果都没有时间戳，只能靠会话文件 mtime 当心跳；
         // 光看消息时间会把正在连续跑工具的会话误判成"卡住了"。
         let message_ts = last.ts.or(session.updated_at);
@@ -214,7 +229,7 @@ impl LivenessProbe {
         };
         let idle_seconds = activity_ts.map(|ts| (self.now_ms - ts) / 1000);
 
-        let (state, reason) = classify(last, idle_seconds, process_alive);
+        let (state, reason) = classify_with_liveness(last, idle_seconds, liveness);
         SessionStatus {
             uid: session.uid.clone(),
             tool: session.tool.clone(),
@@ -226,6 +241,7 @@ impl LivenessProbe {
             evidence: StateEvidence {
                 holder_pid,
                 process_alive,
+                process_info_available: self.process_info_available,
                 idle_seconds,
                 activity_source,
                 last_role: last.role.clone(),
@@ -236,16 +252,38 @@ impl LivenessProbe {
     }
 }
 
-/// 状态判定的纯逻辑，便于单测覆盖各分支
-pub fn classify(
+/// 持有进程的存活情况。`Unknown` 表示本平台拿不到进程列表 ——
+/// 不能等同于 `Dead`，否则"AI 在等我回复"会被误报成"已结束但有遗留"。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProcessLiveness {
+    Alive,
+    Dead,
+    Unknown,
+}
+
+impl ProcessLiveness {
+    fn is_alive(self) -> bool {
+        self == Self::Alive
+    }
+
+    /// 能否断定进程已经退出。`Unknown` 时不能断定
+    fn is_confirmed_dead(self) -> bool {
+        self == Self::Dead
+    }
+}
+
+/// 状态判定的纯逻辑，便于单测覆盖各分支。进程信息不可用时走保守分支：
+/// 宁可说"还开着可以续聊"，也不要误报"已结束"让用户以为不用管了。
+pub fn classify_with_liveness(
     last: &LastMessage,
     idle_seconds: Option<i64>,
-    process_alive: bool,
+    liveness: ProcessLiveness,
 ) -> (SessionState, String) {
     let head = last.head.clone().unwrap_or_default();
     let role = last.role.clone().unwrap_or_default();
     let kind = last.kind.clone().unwrap_or_default();
     let idle = idle_seconds.unwrap_or(i64::MAX);
+    let process_alive = liveness.is_alive();
 
     if INTERRUPT_MARKS.iter().any(|mark| head.contains(mark)) {
         return (
@@ -275,9 +313,17 @@ pub fn classify(
                 "最后是工具调用且尚无结果，时间很近，判为仍在执行".to_string(),
             );
         }
+        if liveness.is_confirmed_dead() {
+            return (
+                SessionState::Unfinished,
+                "最后是工具调用且没有结果，进程已退出，动作没走完".to_string(),
+            );
+        }
         return (
             SessionState::Unfinished,
-            "最后是工具调用且没有结果，进程已退出，动作没走完".to_string(),
+            format!(
+                "最后是工具调用且 {idle} 秒没有结果；进程状态未知（本机拿不到进程列表），按没走完处理"
+            ),
         );
     }
 
@@ -318,17 +364,22 @@ pub fn classify(
 
     let asking = QUESTION_MARKS.iter().any(|mark| head.contains(mark));
     if asking {
-        // 进程都没了就谈不上"在等我回复"，但这类会话确实是没聊完，标成遗留更有用
-        return if process_alive {
-            (
+        // 进程都没了就谈不上"在等我回复"，但这类会话确实是没聊完，标成遗留更有用。
+        // 进程状态未知时保留 awaiting_input：漏提醒的代价大于多提醒一次。
+        return match liveness {
+            ProcessLiveness::Alive => (
                 SessionState::AwaitingInput,
                 "AI 最后一句在提问或请你确认，会话仍开着".to_string(),
-            )
-        } else {
-            (
+            ),
+            ProcessLiveness::Unknown => (
+                SessionState::AwaitingInput,
+                "AI 最后一句在提问或请你确认；进程状态未知（本机拿不到进程列表），先按等你回复处理"
+                    .to_string(),
+            ),
+            ProcessLiveness::Dead => (
                 SessionState::Unfinished,
                 "AI 最后在等你回话，但会话已经关闭 —— 你漏回了".to_string(),
-            )
+            ),
         };
     }
 
@@ -342,13 +393,25 @@ pub fn classify(
     if last.has_open_items {
         return (
             SessionState::Unfinished,
-            "会话已结束，但摘要里还有未完成事项".to_string(),
+            if liveness.is_confirmed_dead() {
+                "会话已结束，但摘要里还有未完成事项".to_string()
+            } else {
+                "摘要里还有未完成事项；进程状态未知（本机拿不到进程列表）".to_string()
+            },
         );
     }
 
+    if liveness.is_confirmed_dead() {
+        return (
+            SessionState::Done,
+            "会话已结束，最后是 AI 的交付且无遗留".to_string(),
+        );
+    }
+
+    // 进程状态未知且无遗留：只能说"没在等你"，不能断言已收尾
     (
-        SessionState::Done,
-        "会话已结束，最后是 AI 的交付且无遗留".to_string(),
+        SessionState::Idle,
+        "最后是 AI 的交付且无遗留；进程状态未知（本机拿不到进程列表），未断言已结束".to_string(),
     )
 }
 
@@ -359,14 +422,46 @@ fn file_mtime_ms(path: &str) -> Option<i64> {
     Some(duration.as_millis() as i64)
 }
 
-/// `ps` 一次性快照，避免逐个会话 fork 进程
-fn snapshot_processes() -> HashMap<i32, String> {
+/// 进程快照结果。**拿不到进程列表**与**进程确实不在**是两件事：
+/// 前者不能推断成"会话已结束"，否则 awaiting_input 会全变成 unfinished。
+struct ProcessSnapshot {
+    processes: HashMap<i32, String>,
+    /// 探测是否成功。false 表示本平台/环境拿不到进程信息，判定需降级
+    available: bool,
+}
+
+/// 一次性进程快照，避免逐个会话 fork。
+///
+/// Unix 走 `ps -eo pid=,command=`。Windows 没有 `ps`，先试 `wmic`，
+/// 它在 Win11 / 新版 Win10 已被移除，所以再回退到 PowerShell 的 CIM 查询。
+/// （`tasklist` 只有映像名，读不到 `--resume-id`，对会话归属判定没用。）
+fn snapshot_processes() -> ProcessSnapshot {
+    #[cfg(windows)]
+    let parsed = snapshot_windows().or_else(snapshot_windows_powershell);
+    #[cfg(not(windows))]
+    let parsed = snapshot_unix();
+
+    match parsed {
+        Some(processes) => ProcessSnapshot {
+            processes,
+            available: true,
+        },
+        None => ProcessSnapshot {
+            processes: HashMap::new(),
+            available: false,
+        },
+    }
+}
+
+#[cfg(not(windows))]
+fn snapshot_unix() -> Option<HashMap<i32, String>> {
     let output = std::process::Command::new("ps")
         .args(["-eo", "pid=,command="])
-        .output();
-    let Ok(output) = output else {
-        return HashMap::new();
-    };
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
     let text = String::from_utf8_lossy(&output.stdout);
     let mut map = HashMap::new();
     for line in text.lines() {
@@ -378,7 +473,94 @@ fn snapshot_processes() -> HashMap<i32, String> {
             map.insert(pid, command.trim().to_string());
         }
     }
-    map
+    Some(map)
+}
+
+/// Windows：`wmic process get ProcessId,CommandLine /format:csv`
+///
+/// CSV 首列是 Node，其后 CommandLine、ProcessId。命令行本身可能含逗号，
+/// 所以从右侧切出 ProcessId，剩下的中间段整体当命令行。
+#[cfg(windows)]
+fn snapshot_windows() -> Option<HashMap<i32, String>> {
+    let output = std::process::Command::new("wmic")
+        .args(["process", "get", "ProcessId,CommandLine", "/format:csv"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    let mut map = HashMap::new();
+    for line in text.lines().skip(1) {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let Some((head, pid_text)) = trimmed.rsplit_once(',') else {
+            continue;
+        };
+        let Ok(pid) = pid_text.trim().parse::<i32>() else {
+            continue;
+        };
+        // head = "Node,<CommandLine 可能含逗号>"，切掉第一段 Node
+        let command = head.split_once(',').map(|(_, rest)| rest).unwrap_or("");
+        map.insert(pid, command.trim().to_string());
+    }
+    // 空表说明 wmic 存在但没吐出有效数据，交给下一个后端
+    if map.is_empty() {
+        return None;
+    }
+    Some(map)
+}
+
+/// Windows 回退：PowerShell + CIM。`wmic` 在 Win11 / 新版 Win10 已被移除。
+///
+/// 用制表符分隔而不是 CSV：命令行里逗号很常见，制表符几乎不会出现，解析更稳。
+#[cfg(windows)]
+fn snapshot_windows_powershell() -> Option<HashMap<i32, String>> {
+    const SCRIPT: &str = "Get-CimInstance Win32_Process | \
+         ForEach-Object { \"$($_.ProcessId)`t$($_.CommandLine)\" }";
+    let mut map = HashMap::new();
+    // 先按名字找（PowerShell 7 的 pwsh 只在 PATH 里），再兜底到 System32 的绝对路径 ——
+    // PATH 被调用方污染时（例如从 Git Bash 继承了分号分隔的 PATH）按名字会找不到。
+    for shell in powershell_candidates() {
+        let output = std::process::Command::new(&shell)
+            .args(["-NoProfile", "-NonInteractive", "-Command", SCRIPT])
+            .output();
+        let Ok(output) = output else { continue };
+        if !output.status.success() {
+            continue;
+        }
+        let text = String::from_utf8_lossy(&output.stdout);
+        for line in text.lines() {
+            let Some((pid_text, command)) = line.split_once('\t') else {
+                continue;
+            };
+            if let Ok(pid) = pid_text.trim().parse::<i32>() {
+                map.insert(pid, command.trim().to_string());
+            }
+        }
+        if !map.is_empty() {
+            return Some(map);
+        }
+    }
+    None
+}
+
+/// PowerShell 候选路径：先按名字（走 PATH），再兜底 System32 的绝对路径
+#[cfg(windows)]
+fn powershell_candidates() -> Vec<std::path::PathBuf> {
+    let mut candidates: Vec<std::path::PathBuf> = vec!["powershell".into(), "pwsh".into()];
+    if let Some(root) = std::env::var_os("SystemRoot") {
+        candidates.push(
+            std::path::PathBuf::from(root)
+                .join("System32")
+                .join("WindowsPowerShell")
+                .join("v1.0")
+                .join("powershell.exe"),
+        );
+    }
+    candidates
 }
 
 /// 读 Kiro 的会话锁：`~/.kiro/sessions/cli/<session>.lock` → `{"pid":123,...}`
@@ -434,6 +616,21 @@ pub fn extract_session_ids(command: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 两态便捷封装：`true` = 明确探测到进程存活，`false` = 明确探测到已退出。
+    /// 探测失败（Unknown）的分支由专门的测试覆盖。
+    fn classify(
+        last: &LastMessage,
+        idle_seconds: Option<i64>,
+        process_alive: bool,
+    ) -> (SessionState, String) {
+        let liveness = if process_alive {
+            ProcessLiveness::Alive
+        } else {
+            ProcessLiveness::Dead
+        };
+        classify_with_liveness(last, idle_seconds, liveness)
+    }
 
     fn last(role: &str, kind: &str, head: &str, has_open: bool) -> LastMessage {
         LastMessage {
@@ -539,6 +736,32 @@ mod tests {
             false,
         );
         assert_eq!(unfinished, SessionState::Unfinished);
+    }
+
+    /// 拿不到进程列表时，"在等我回复"不能退化成"你漏回了"：
+    /// 前者提示用户去回话，后者暗示已经无事可做。
+    #[test]
+    fn unknown_liveness_keeps_awaiting_input() {
+        let asking = last("assistant", "text", "两个方案你选哪个？", false);
+        let (unknown, reason) =
+            classify_with_liveness(&asking, Some(3600), ProcessLiveness::Unknown);
+        assert_eq!(unknown, SessionState::AwaitingInput);
+        assert!(reason.contains("进程状态未知"));
+        // 明确探测到进程已退出时，仍然判为遗留
+        let (dead, _) = classify_with_liveness(&asking, Some(3600), ProcessLiveness::Dead);
+        assert_eq!(dead, SessionState::Unfinished);
+    }
+
+    /// 同理，不能在探测失败时断言 done
+    #[test]
+    fn unknown_liveness_does_not_claim_done() {
+        let delivered = last("assistant", "text", "改完了", false);
+        let (unknown, reason) =
+            classify_with_liveness(&delivered, Some(3600), ProcessLiveness::Unknown);
+        assert_eq!(unknown, SessionState::Idle);
+        assert!(reason.contains("未断言已结束"));
+        let (dead, _) = classify_with_liveness(&delivered, Some(3600), ProcessLiveness::Dead);
+        assert_eq!(dead, SessionState::Done);
     }
 
     #[test]

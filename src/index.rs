@@ -508,12 +508,14 @@ impl Index {
             sql.push_str(" AND m.role = ?\n");
             binds.push(Box::new(role.clone()));
         }
+        // 时间戳缺失表示"未知"，不是"1970 年"。COALESCE(ts,0) 会让这类消息
+        // 在任何 since 过滤下都不可见；改为放行 null，由会话级时间兜底判断。
         if let Some(since) = options.since {
-            sql.push_str(" AND COALESCE(m.ts, 0) >= ?\n");
+            sql.push_str(" AND (m.ts IS NULL OR m.ts >= ?)\n");
             binds.push(Box::new(since));
         }
         if let Some(until) = options.until {
-            sql.push_str(" AND COALESCE(m.ts, 0) <= ?\n");
+            sql.push_str(" AND (m.ts IS NULL OR m.ts <= ?)\n");
             binds.push(Box::new(until));
         }
         sql.push_str(
@@ -531,6 +533,19 @@ impl Index {
         if let Some(cwd) = &options.cwd {
             sql.push_str(" AND COALESCE(s.cwd, '') LIKE ?\n");
             binds.push(Box::new(format!("%{cwd}%")));
+        }
+        // 消息时间为 null 时用所属会话的时间兜底，避免放行范围外的会话
+        if let Some(since) = options.since {
+            sql.push_str(
+                " AND (hit.ts IS NOT NULL OR COALESCE(s.updated_at, s.created_at, 0) >= ?)\n",
+            );
+            binds.push(Box::new(since));
+        }
+        if let Some(until) = options.until {
+            sql.push_str(
+                " AND (hit.ts IS NOT NULL OR COALESCE(s.created_at, s.updated_at, 0) <= ?)\n",
+            );
+            binds.push(Box::new(until));
         }
         sql.push_str(
             ")
@@ -634,22 +649,30 @@ impl Index {
             .optional()?)
     }
 
-    /// 会话 uid 支持模糊定位：完整 uid、`tool:前缀`、或裸 session_id 前缀
-    pub fn resolve_uid(&self, input: &str) -> Result<Option<String>> {
+    /// 会话 uid 支持模糊定位：完整 uid、`tool:前缀`、或裸 session_id 前缀。
+    ///
+    /// 前缀命中多个会话时返回全部候选，由上层报错提示补长前缀 ——
+    /// 静默取"最近更新的那个"会让用户读到、甚至交接错的会话。
+    pub fn resolve_uid_candidates(&self, input: &str, limit: usize) -> Result<Vec<String>> {
         if self.get_session(input)?.is_some() {
-            return Ok(Some(input.to_string()));
+            return Ok(vec![input.to_string()]);
         }
         let pattern = format!("{input}%");
-        Ok(self
-            .conn
-            .query_row(
-                "SELECT uid FROM sessions
-                 WHERE uid LIKE ?1 OR session_id LIKE ?1
-                 ORDER BY COALESCE(updated_at, 0) DESC LIMIT 1",
-                [pattern],
-                |row| row.get::<_, String>(0),
-            )
-            .optional()?)
+        let mut stmt = self.conn.prepare(
+            "SELECT uid FROM sessions
+             WHERE uid LIKE ?1 OR session_id LIKE ?1
+             ORDER BY COALESCE(updated_at, 0) DESC LIMIT ?2",
+        )?;
+        let rows = stmt.query_map(params![pattern, limit.max(1) as i64], |row| {
+            row.get::<_, String>(0)
+        })?;
+        Ok(rows.flatten().collect())
+    }
+
+    /// 唯一命中时返回该 uid；无命中返回 None。多个候选由 `resolve_uid_candidates` 处理
+    #[cfg(test)]
+    pub fn resolve_uid(&self, input: &str) -> Result<Option<String>> {
+        Ok(self.resolve_uid_candidates(input, 1)?.into_iter().next())
     }
 
     pub fn read_messages(&self, uid: &str, options: &ReadOptions) -> Result<Vec<MessageRow>> {
@@ -990,6 +1013,70 @@ mod tests {
             index.resolve_uid("abcdef12").unwrap().as_deref(),
             Some("kiro:abcdef123456")
         );
+    }
+
+    /// 前缀撞车时必须暴露全部候选，让上层报歧义而不是静默选一个
+    #[test]
+    fn colliding_prefixes_return_all_candidates() {
+        let mut index = Index::memory().unwrap();
+        seed(
+            &mut index,
+            "kiro",
+            "abcdef111111",
+            vec![Message::text("user", "一", None)],
+        );
+        seed(
+            &mut index,
+            "kiro",
+            "abcdef222222",
+            vec![Message::text("user", "二", None)],
+        );
+        let candidates = index.resolve_uid_candidates("abcdef", 5).unwrap();
+        assert_eq!(candidates.len(), 2);
+        // 完整 uid 仍然唯一命中
+        assert_eq!(
+            index
+                .resolve_uid_candidates("kiro:abcdef111111", 5)
+                .unwrap(),
+            vec!["kiro:abcdef111111".to_string()]
+        );
+    }
+
+    /// 时间戳为 null 的消息不应被 since 过滤静默吞掉，
+    /// 但也不能因此放行范围外的会话
+    #[test]
+    fn null_timestamps_follow_their_session_time() {
+        let mut index = Index::memory().unwrap();
+        // seed 出来的会话 updated_at = 1_700_000_100_000
+        seed(
+            &mut index,
+            "kiro",
+            "s10",
+            vec![Message::text("user", "关键词在这里", None)],
+        );
+        // since 早于会话时间：null 消息应当可见
+        let hits = index
+            .search(&SearchOptions {
+                query: "关键词".to_string(),
+                since: Some(1_600_000_000_000),
+                limit: 10,
+                max_per_session: 3,
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(hits.len(), 1, "会话在范围内，null 时间的消息应可见");
+
+        // since 晚于会话时间：不该命中
+        let hits = index
+            .search(&SearchOptions {
+                query: "关键词".to_string(),
+                since: Some(1_900_000_000_000),
+                limit: 10,
+                max_per_session: 3,
+                ..Default::default()
+            })
+            .unwrap();
+        assert!(hits.is_empty(), "会话在范围外，不应因 null 时间被放行");
     }
 
     /// Claude 的子代理文件与主会话共用 sessionId，重解析不能互相抹掉

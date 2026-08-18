@@ -32,6 +32,19 @@ ln -sf "$PWD/target/release/ash" ~/.local/bin/ash   # 或任意 PATH 目录
 ash sync --full                                     # 首次建索引
 ```
 
+Windows（PowerShell）：
+
+```powershell
+cargo build --release
+# 把 target\release\ash.exe 放到任意 PATH 目录，例如
+Copy-Item target\release\ash.exe "$env:LOCALAPPDATA\Programs\ash.exe"
+ash sync --full
+```
+
+主目录按 `HOME` → `USERPROFILE` → `HOMEDRIVE`+`HOMEPATH` 顺序探测；
+进程存活判定在 Unix 走 `ps`、Windows 走 `wmic`。两者都拿不到时状态判定会降级
+（见下文「会话状态」末段），不会误报"已完成"。
+
 ## CLI
 
 ```bash
@@ -50,6 +63,8 @@ ash stats
 ```
 
 `uid` 形如 `kiro:<session_id>`，也接受 `session_id` 前缀（`kiro:b2daab07` 即可）。
+前缀同时命中多个会话时会列出候选并要求补长，不会静默替你选一个 ——
+读错会话尚可察觉，把错的上下文交接出去就麻烦了。
 
 ## 作为 MCP 挂到三家
 
@@ -83,12 +98,17 @@ args = ["mcp"]
 | `done` 已完成 | 已收尾 | 进程已退出且无遗留信号 |
 | `unfinished` 已结束但有遗留 | 没聊完 | 进程已退出，但有待办信号／提问没人回／工具没走完 |
 
-状态**不入库**（易失，落库必然读到陈旧值），每次实时算：一次 `ps` 快照 + 读 Kiro 锁目录 + 单会话
+状态**不入库**（易失，落库必然读到陈旧值），每次实时算：一次进程快照 + 读 Kiro 锁目录 + 单会话
 最后一条消息。判定信号按可靠性分三层：
 
 1. **Kiro 的 `.lock`**（含 `pid` / `started_at`）→ 能精确知道会话被哪个进程持有；
 2. **进程命令行**（`--resume-id` / `resume <id>`）→ 显式恢复的会话能对上号；
 3. **对话形态 + 活动时间** → Codex / Claude 写完日志就关 fd（`lsof` 抓不到持有者），只能推断。
+
+拿不到进程列表时（受限环境、`ps`/`wmic` 不可用），"查不到进程"**不会**被当成"进程已退出"：
+`awaiting_input` 不会退化成 `unfinished`，`idle` 也不会被断言成 `done`。这类结果里
+`evidence.process_info_available` 为 `false`，`session_active` 会额外带一条 `note`
+说明判定仅基于对话形态与活动时间。宁可多提醒一次，也不误报"已收尾"。
 
 活动时间取「最后消息时间」与「会话文件 mtime」的较新者：Kiro 的助手消息和工具结果都不带
 timestamp，只看消息时间会把正在连续跑工具的会话误判成卡住。
@@ -121,7 +141,7 @@ timestamp，只看消息时间会把正在连续跑工具的会话误判成卡�
 ## 开发
 
 ```bash
-cargo test          # 31 个单测
+cargo test          # 48 个单测
 cargo clippy
 cargo fmt
 ```

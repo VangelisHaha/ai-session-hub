@@ -45,9 +45,55 @@ pub fn handoff_command(tool: &str, brief_path: &str, note: &str) -> String {
     }
 }
 
-/// 单引号包裹，内部单引号按 shell 规则转义，避免 prompt 里的引号 / 反引号被展开
+/// 按当前平台的 shell 规则引用 prompt。
+///
+/// POSIX：单引号包裹，内部单引号按 `'\''` 转义，反引号 / `$` 都不会被展开。
+/// Windows：cmd.exe 不认单引号（会把 `'` 当字面量传进去），必须用双引号，
+/// 内部双引号转义为 `""`；末尾反斜杠要成对，否则会把结尾的引号转义掉。
 pub fn shell_quote(input: &str) -> String {
+    if cfg!(windows) {
+        quote_windows(input)
+    } else {
+        quote_posix(input)
+    }
+}
+
+fn quote_posix(input: &str) -> String {
     format!("'{}'", input.replace('\'', "'\\''"))
+}
+
+/// cmd.exe 风格引用：双引号包裹，内部 `"` → `""`，
+/// 紧贴收尾引号的反斜杠序列需要加倍以免转义掉引号本身。
+fn quote_windows(input: &str) -> String {
+    let mut out = String::with_capacity(input.len() + 2);
+    out.push('"');
+    let mut pending_backslashes = 0usize;
+    for ch in input.chars() {
+        match ch {
+            '\\' => {
+                pending_backslashes += 1;
+                out.push('\\');
+            }
+            '"' => {
+                // 反斜杠在引号前需要加倍，然后把引号写成 ""
+                for _ in 0..pending_backslashes {
+                    out.push('\\');
+                }
+                pending_backslashes = 0;
+                out.push_str("\"\"");
+            }
+            other => {
+                pending_backslashes = 0;
+                out.push(other);
+            }
+        }
+    }
+    // 收尾引号前的反斜杠同样要加倍
+    for _ in 0..pending_backslashes {
+        out.push('\\');
+    }
+    out.push('"');
+    out
 }
 
 #[cfg(test)]
@@ -65,9 +111,31 @@ mod tests {
     }
 
     #[test]
-    fn prompts_are_shell_safe() {
-        let cmd = resume_with_prompt("kiro", "id1", "别 `rm -rf /` 也别 'quote'");
-        assert!(cmd.contains("'\\''quote'\\''"));
-        assert!(cmd.starts_with("kiro-cli chat --resume-id id1 '"));
+    fn prompts_are_shell_safe_on_posix() {
+        let quoted = quote_posix("别 `rm -rf /` 也别 'quote'");
+        assert!(quoted.contains("'\\''quote'\\''"));
+        assert!(quoted.starts_with('\'') && quoted.ends_with('\''));
+        // 反引号留在单引号里不会被展开
+        assert!(quoted.contains("`rm -rf /`"));
+    }
+
+    #[test]
+    fn prompts_are_shell_safe_on_windows() {
+        assert_eq!(quote_windows(r#"说 "你好""#), r#""说 ""你好""""#);
+        // 末尾反斜杠必须加倍，否则会转义掉收尾引号
+        assert_eq!(quote_windows(r"C:\path\"), r#""C:\path\\""#);
+        // 反斜杠 + 引号：反斜杠加倍后引号写成 ""
+        assert_eq!(quote_windows(r#"a\"b"#), r#""a\\""b""#);
+    }
+
+    #[test]
+    fn resume_with_prompt_quotes_for_the_current_platform() {
+        let cmd = resume_with_prompt("kiro", "id1", "继续 'x'");
+        assert!(cmd.starts_with("kiro-cli chat --resume-id id1 "));
+        if cfg!(windows) {
+            assert!(cmd.contains('"'));
+        } else {
+            assert!(cmd.contains("'\\''x'\\''"));
+        }
     }
 }
