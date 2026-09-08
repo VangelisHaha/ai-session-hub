@@ -1,1 +1,19 @@
 /target
+
+# 本地运行数据：会话索引、SQLite WAL 和跨工具交接包
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+/handoff/
+/.ai-session-hub/
+
+# 其他工具在本目录产生的日志，不属于本项目
+/logs/
+*.log
+
+# 编辑器与系统产物
+.DS_Store
+.idea/
+.vscode/

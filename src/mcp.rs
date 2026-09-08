@@ -56,7 +56,7 @@ pub fn serve() -> Result<()> {
                     "protocolVersion": PROTOCOL_VERSION,
                     "capabilities": { "tools": {} },
                     "serverInfo": { "name": SERVER_NAME, "version": SERVER_VERSION },
-                    "instructions": "跨 AI 工具（Claude Code / Codex / Kiro / Gemini / OpenCode）的会话检索与交接。想回顾历史先用 session_search，读全文用 session_read，换工具继续聊用 session_handoff。",
+                    "instructions": "Local history across AI coding tools (Claude Code / Codex / Kiro / Gemini / OpenCode). Use these tools whenever the user refers to earlier/other conversations, past work, previous chats, prior sessions, \"what did I do\", \"where did I discuss\", \"resume\", \"continue that\", \"is it still running\", or wants to move context to another AI tool. Search history -> session_search; list/browse -> session_list; read transcript -> session_read; summarize -> session_digest; live status -> session_status / session_active; move to another tool -> session_handoff / session_resume_cmd.\n跨 AI 工具的本地会话检索与交接。中文短指令路由：'会话搜索/搜会话/找下会话/以前聊过' -> session_search；'最近会话/会话列表/看下会话/昨天的会话' -> session_list；'活跃会话/哪些在跑/在等我确认' -> session_active；'跑完了吗/还在跑吗' -> session_status；'读会话/聊天记录/当时说了什么' -> session_read；'会话摘要/总结一下/复盘' -> session_digest；'交接/换工具继续/带上下文过去' -> session_handoff；'续聊/接着聊/恢复会话' -> session_resume_cmd；'刷新索引/重建索引' -> session_sync；'索引概况/有多少会话' -> session_stats。只要用户提到'会话''之前''以前''上次''历史'并指向过去的对话，就先查这套工具，不要凭记忆回答。",
                 }),
             ),
             "ping" => success(id, json!({})),
@@ -170,11 +170,11 @@ fn tool_definitions() -> Vec<Value> {
     vec![
         json!({
             "name": "session_search",
-            "description": "跨 AI 工具全文检索历史会话（Claude Code / Codex / Kiro / Gemini / OpenCode）。支持中文短语。想知道'我以前在哪聊过某件事'时用它。",
+            "description": "Full-text search across past AI coding sessions (Claude Code / Codex / Kiro / Gemini / OpenCode). USE THIS whenever the user asks about earlier conversations, previous chats, past work, prior context, or anything they \"talked about before\" / \"did last week\" / \"discussed somewhere\" — e.g. \"where did I discuss X\", \"did I already fix Y\", \"find that conversation about Z\", \"search my history\", \"what did we decide about ...\". Also the right tool when the user cannot remember which AI tool or project a discussion happened in. Supports Chinese phrases.\n跨 AI 工具全文检索历史会话。想知道'我以前在哪聊过某件事'时用它。中文触发词：会话搜索、搜索会话、搜会话、找会话、找下会话、查会话、查下会话、搜历史、搜下历史、历史会话、以前聊过、之前聊过、之前讨论过、上次聊的、我在哪聊过、之前是怎么弄的。",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "query": { "type": "string", "description": "检索词，多个词之间空格分隔（AND）" },
+                    "query": { "type": "string", "description": "Search terms; multiple terms are AND-ed, space separated. 检索词，多个词之间空格分隔（AND）" },
                     "tool": { "type": "string", "enum": tool_enum, "description": "只搜某个工具" },
                     "cwd": { "type": "string", "description": "按工程目录过滤（子串匹配）" },
                     "since": { "type": "string", "description": "起始时间：7d / 36h / 90m / 2026-07-30 / 时间戳" },
@@ -189,7 +189,7 @@ fn tool_definitions() -> Vec<Value> {
         }),
         json!({
             "name": "session_list",
-            "description": "按工具 / 工程目录 / 时间列出历史会话，用于'我昨天在某个项目里都聊了什么'这类回溯。",
+            "description": "List / browse past AI sessions by tool, project directory, title, state or time range. USE THIS for \"what was I working on yesterday\", \"list my recent sessions\", \"show my chats in this repo\", \"which sessions are unfinished\", \"my codex sessions last week\", or any request to enumerate history rather than keyword-search it.\n按工具 / 工程目录 / 时间列出历史会话，用于'我昨天在某个项目里都聊了什么'这类回溯。中文触发词：最近会话、最近的会话、会话列表、列一下会话、列出会话、看下会话、看看会话、我的会话、有哪些会话、昨天的会话、今天的会话、本周会话、这个项目的会话、没做完的会话、未完成会话。",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -207,7 +207,7 @@ fn tool_definitions() -> Vec<Value> {
         }),
         json!({
             "name": "session_status",
-            "description": "判断某个会话现在是什么状态：进行中(running)/待我回复(awaiting_input)/待我确认工具执行(awaiting_approval)/已被打断(interrupted)/空闲可续聊(idle)/已完成(done)/已结束但有遗留(unfinished)，并给出判定依据与下一步建议。用户问'那个会话跑完了吗''还在跑吗''要不要我确认'时用它。",
+            "description": "Check the live state of one session: running / awaiting_input / awaiting_approval / interrupted / idle / done / unfinished, with the evidence behind the verdict and a suggested next step. USE THIS for \"is that session done?\", \"is it still running?\", \"did it finish?\", \"is it stuck?\", \"is it waiting on me to approve something?\".\n判断某个会话现在是什么状态：进行中/待我回复/待我确认工具执行/已被打断/空闲可续聊/已完成/已结束但有遗留。中文触发词：会话状态、跑完了吗、还在跑吗、结束了吗、好了没、卡住了吗、是不是在等我、要不要我确认、这个会话怎么了。",
             "inputSchema": {
                 "type": "object",
                 "properties": { "uid": { "type": "string" } },
@@ -216,7 +216,7 @@ fn tool_definitions() -> Vec<Value> {
         }),
         json!({
             "name": "session_active",
-            "description": "总览当前还开着的会话：busy=正在跑或等批准（别打扰），waiting_for_me=在等我回话，open_but_idle=进程还开着但空闲。用户问'现在哪些 AI 在干活''codex 忙不忙''有没有在等我确认的'时用它。",
+            "description": "Overview of all currently open AI sessions, bucketed into busy (working or waiting for approval — don't interrupt), waiting_for_me (needs my reply), and open_but_idle. USE THIS for \"which AI agents are working right now\", \"is codex busy\", \"anything waiting on me\", \"what's still open\", \"do I have any pending approvals\".\n总览当前还开着的会话，用户问'现在哪些 AI 在干活''有没有在等我确认的'时用它。中文触发词：活跃会话、当前会话、在跑的会话、开着的会话、哪些在跑、谁在干活、忙不忙、有没有等我确认的、有没有待处理的、还有什么没关。",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -228,11 +228,11 @@ fn tool_definitions() -> Vec<Value> {
         }),
         json!({
             "name": "session_read",
-            "description": "读取某个会话的正文（Markdown）。默认剔除工具输出并限制字符预算，避免打爆上下文。",
+            "description": "Read the transcript of one session as Markdown. USE THIS after session_search / session_list to actually see what was said, or for \"show me that conversation\", \"open that session\", \"what exactly did it say\", \"read the last N messages\". Tool output is stripped and a character budget is applied by default so it won't blow up the context.\n读取某个会话的正文（Markdown），默认剔除工具输出并限制字符预算。中文触发词：读会话、看会话内容、打开会话、会话正文、聊天记录、当时说了什么、原文、最后几条消息、翻一下那个会话。",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "uid": { "type": "string", "description": "会话标识，形如 kiro:<session_id>，也接受 session_id 前缀" },
+                    "uid": { "type": "string", "description": "Session UID like kiro:<session_id>; a unique session_id prefix also works. Get it from session_search / session_list." },
                     "tail": { "type": "integer", "description": "只要最近 N 条消息" },
                     "from_seq": { "type": "integer", "description": "从第几条开始（配合分页）" },
                     "include_tool_results": { "type": "boolean", "description": "是否带上工具输出，默认 false" },
@@ -244,7 +244,7 @@ fn tool_definitions() -> Vec<Value> {
         }),
         json!({
             "name": "session_digest",
-            "description": "生成某个会话的结构化摘要：用户诉求、关键结论、执行过的命令、涉及文件、可能未完成的事项。纯规则抽取，无模型幻觉。",
+            "description": "Structured summary of one session: what the user wanted, key conclusions, commands run, files touched, and likely unfinished items. USE THIS for \"summarize that session\", \"recap what happened\", \"tl;dr of that chat\", \"what was left unfinished\", \"catch me up on that\". Deterministic rule-based extraction, no model, no hallucination.\n生成某个会话的结构化摘要：用户诉求、关键结论、执行过的命令、涉及文件、可能未完成的事项。中文触发词：会话摘要、总结会话、总结一下那个会话、复盘、回顾一下、干了什么、结论是什么、还有什么没做完、遗留问题。",
             "inputSchema": {
                 "type": "object",
                 "properties": { "uid": { "type": "string" } },
@@ -253,7 +253,7 @@ fn tool_definitions() -> Vec<Value> {
         }),
         json!({
             "name": "session_handoff",
-            "description": "跨工具交接：把某个会话的摘要 + 最近对话原文导出成交接包，并返回目标工具的启动命令（新会话第一句就带上下文）。同工具时额外给出原生续聊命令。",
+            "description": "Hand off a session to another AI tool: exports summary + recent transcript into a handoff package and returns the launch command so the new session starts with full context. USE THIS for \"continue this in claude/codex/kiro\", \"move this over to another tool\", \"switch tools but keep context\", \"transfer this conversation\", \"port the context\". Same-tool handoff also returns the native resume command.\n跨工具交接：导出摘要 + 最近对话原文，并返回目标工具的启动命令。中文触发词：会话交接、交接、转到、换个工具继续、拿到 claude 去弄、换 codex 继续聊、把上下文带过去、迁移上下文、导出上下文。",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -268,7 +268,7 @@ fn tool_definitions() -> Vec<Value> {
         }),
         json!({
             "name": "session_resume_cmd",
-            "description": "拿到某个会话在其原生工具里的恢复命令；给了 prompt 就返回'恢复并直接追问'的一条命令。",
+            "description": "Get the native resume command for a session in its own tool. USE THIS for \"how do I resume that session\", \"reopen that chat\", \"continue where I left off\", \"give me the command to pick that back up\". If a prompt is supplied, returns a single command that resumes and immediately asks that follow-up.\n拿到某个会话在其原生工具里的恢复命令；给了 prompt 就返回'恢复并直接追问'的一条命令。中文触发词：恢复会话、续聊、接着聊、怎么继续、重新打开、回到那个会话、恢复命令。",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -280,7 +280,7 @@ fn tool_definitions() -> Vec<Value> {
         }),
         json!({
             "name": "session_sync",
-            "description": "刷新索引（默认增量，查询时会自动调用；full=true 时全量重建）。",
+            "description": "Refresh the session index (incremental by default; full=true rebuilds from scratch). Queries auto-refresh, so only call this for \"reindex\", \"rebuild the index\", \"resync sessions\", or when a session you just had is missing from search results.\n刷新索引（默认增量，查询时会自动调用；full=true 时全量重建）。中文触发词：刷新索引、重建索引、同步会话、重新索引、索引更新、搜不到刚才的会话。",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -291,7 +291,7 @@ fn tool_definitions() -> Vec<Value> {
         }),
         json!({
             "name": "session_stats",
-            "description": "查看索引概况：各工具的会话数与消息数、上次同步时间、索引文件位置。",
+            "description": "Index overview: session and message counts per tool, last sync time, index file location. USE THIS for \"index stats\", \"how many sessions do I have\", \"is the index healthy\", \"where is the index stored\".\n查看索引概况：各工具的会话数与消息数、上次同步时间、索引文件位置。中文触发词：索引概况、索引统计、会话统计、有多少会话、索引在哪、索引多大、索引健康吗。",
             "inputSchema": { "type": "object", "properties": {} }
         }),
     ]
