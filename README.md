@@ -1,34 +1,36 @@
 # ai-session-hub
 
-跨 AI 工具的本地会话检索、上下文回溯与跨工具交接。项目产出一个名为 `ash` 的 Rust 二进制文件，既可以直接作为 CLI 使用，也可以通过 stdio 作为 MCP server 挂载到 AI 客户端。
+English | [简体中文](README.zh-CN.md)
 
-> 重要：本项目会读取本机 AI 会话日志。会话内容可能包含密码、API Token、内部地址、源代码、SQL、个人信息或其他公司机密。它不是脱敏工具，也不会自动识别或删除敏感信息。请只在你信任的机器和 AI 客户端上使用。
+Local session search, context recall, and cross-tool handoff across AI coding tools. The project builds a single Rust binary named `ash`, which works both as a CLI and as an MCP server over stdio.
 
-## 功能
+> Important: this project reads AI session logs from your machine. Session content may contain passwords, API tokens, internal addresses, source code, SQL, personal data, or other confidential material. It is not a redaction tool and it does not detect or remove sensitive information. Only use it on machines and AI clients you trust.
 
-- 跨 Claude Code、Codex、Kiro CLI、Gemini CLI、OpenCode 检索历史会话。
-- 按工程目录、工具、时间、角色过滤，并支持中文短语检索。
-- 读取会话正文，默认限制字符预算并剔除工具输出。
-- 生成确定性摘要：用户诉求、助手要点、执行命令、文件路径和可能未完成事项。
-- 在不同 AI 工具之间生成“摘要 + 最近对话”的 Markdown 交接包。
-- 判断会话是否进行中、等待回复、等待工具审批、空闲、已完成或有遗留事项。
-- 全程本地运行，不调用模型，不发起网络请求，不修改原始会话文件。
+## Features
 
-## 支持的会话来源
+- Search history across Claude Code, Codex, Kiro CLI, Gemini CLI, and OpenCode.
+- Filter by project directory, tool, time range, and role, with Chinese phrase search supported.
+- Read session transcripts, with a character budget and tool output stripped by default.
+- Produce deterministic digests: user intent, assistant takeaways, commands executed, file paths, and likely unfinished items.
+- Generate a "digest + recent transcript" Markdown handoff package to move work between AI tools.
+- Tell whether a session is running, awaiting input, awaiting tool approval, idle, done, or has leftovers.
+- Runs entirely locally: no model calls, no network requests, no writes to the original session files.
 
-| 工具 | 默认读取位置 | 解析方式 |
+## Supported session sources
+
+| Tool | Default location | Parsing strategy |
 | --- | --- | --- |
-| Claude Code | `~/.claude/projects/**/*.jsonl` | JSONL 字节偏移增量 |
-| Codex | `~/.codex/sessions/**/*.jsonl`、`~/.codex/archived_sessions/**/*.jsonl` | JSONL 字节偏移增量 |
-| Kiro CLI | `~/.kiro/sessions/cli/*.jsonl` 及同名 `.json` | JSONL 字节偏移增量 |
-| Gemini CLI | `~/.gemini/tmp/*/chats/session-*.json` | JSON 全量解析 |
-| OpenCode | `~/.local/share/opencode/opencode.db` | SQLite 全量解析 |
+| Claude Code | `~/.claude/projects/**/*.jsonl` | Incremental JSONL by byte offset |
+| Codex | `~/.codex/sessions/**/*.jsonl`, `~/.codex/archived_sessions/**/*.jsonl` | Incremental JSONL by byte offset |
+| Kiro CLI | `~/.kiro/sessions/cli/*.jsonl` plus same-named `.json` | Incremental JSONL by byte offset |
+| Gemini CLI | `~/.gemini/tmp/*/chats/session-*.json` | Full JSON parse |
+| OpenCode | `~/.local/share/opencode/opencode.db` | Full SQLite parse |
 
-源文件只读。索引和交接包写入独立的数据目录，不会回写上述会话来源。
+Source files are read-only. The index and handoff packages are written to a separate data directory and never back into the sources above.
 
-## 安装
+## Installation
 
-需要 Rust stable 工具链。
+Requires the Rust stable toolchain.
 
 ```bash
 cargo build --release
@@ -37,43 +39,43 @@ ln -sf "$PWD/target/release/ash" "$HOME/.local/bin/ash"
 ash sync --full
 ```
 
-如果 `ash` 不在 `PATH` 中，可以直接使用 `target/release/ash`，或将 `$HOME/.local/bin` 加入 `PATH`。
+If `ash` is not on your `PATH`, call `target/release/ash` directly, or add `$HOME/.local/bin` to `PATH`.
 
-## CLI 用法
+## CLI usage
 
 ```bash
-# 刷新索引；查询前也会自动增量刷新
+# Refresh the index; queries also trigger an incremental refresh automatically
 ash sync
 ash sync --full
 ash sync --tool kiro
 
-# 跨工具搜索。多个关键词按 AND 处理
+# Cross-tool search. Multiple terms are AND-ed
 ash search 计划表 草稿 --since 7d
-ash search 额度 --tool kiro --cwd my-project
+ash search quota --tool kiro --cwd my-project
 
-# 列出会话和实时状态
+# List sessions and live state
 ash list --cwd my-project --limit 10
-ash list --state 进行中
+ash list --state running
 ash status kiro:<session-id>
 ash active
 
-# 读取、摘要和交接
+# Read, digest, and hand off
 ash read kiro:<session-id> --tail 20 --only-text --budget 8000
 ash digest kiro:<session-id>
-ash handoff kiro:<session-id> --to claude --note "继续补文档"
-ash resume codex:<session-id> --prompt "接着上文继续"
+ash handoff kiro:<session-id> --to claude --note "finish the docs"
+ash resume codex:<session-id> --prompt "pick up where we left off"
 
-# 查看索引概况
+# Index overview
 ash stats
 ```
 
-会话 UID 形如 `kiro:<session-id>`。查询时也可以使用完整 UID、工具前缀或唯一的会话 ID 前缀。
+A session UID looks like `kiro:<session-id>`. Queries also accept a full UID, a tool prefix, or a unique session ID prefix.
 
-## MCP 配置
+## MCP configuration
 
-`ash mcp` 使用 stdio 通信，不监听端口。将它挂载到 AI 客户端后，客户端可以调用以下 10 个工具：
+`ash mcp` communicates over stdio and does not listen on a port. Once mounted in an AI client, the client can call these 10 tools:
 
-`session_search`、`session_list`、`session_status`、`session_active`、`session_read`、`session_digest`、`session_handoff`、`session_resume_cmd`、`session_sync`、`session_stats`。
+`session_search`, `session_list`, `session_status`, `session_active`, `session_read`, `session_digest`, `session_handoff`, `session_resume_cmd`, `session_sync`, `session_stats`.
 
 ### Kiro CLI
 
@@ -89,7 +91,7 @@ claude mcp add ai-session-hub -- "$HOME/.local/bin/ash" mcp
 
 ### Codex
 
-在 `~/.codex/config.toml` 中加入：
+Add to `~/.codex/config.toml`:
 
 ```toml
 [mcp_servers.ai_session_hub]
@@ -98,58 +100,58 @@ command = "/absolute/path/to/ash"
 args = ["mcp"]
 ```
 
-MCP 客户端一旦获得访问权限，就可以读取索引中允许返回的会话内容。因此请把 MCP 客户端视为本地敏感数据的同等信任边界。
+Any MCP client with access can read whatever session content the index is allowed to return. Treat MCP clients as the same trust boundary as your local sensitive data.
 
-## 会话状态
+## Session states
 
-| 状态 | 含义 |
+| State | Meaning |
 | --- | --- |
-| `running` | 最近有活动，或刚发起用户提问/工具调用 |
-| `awaiting_approval` | 工具调用长时间没有结果，进程仍在，可能在等待审批 |
-| `awaiting_input` | AI 在等待用户回复或确认 |
-| `interrupted` | 最后一条消息带有中断标记 |
-| `idle` | 进程仍在，但没有待处理的提问或工具调用 |
-| `done` | 进程已结束，未发现遗留事项 |
-| `unfinished` | 进程已结束，但留下待办、未回答问题或未完成工具调用 |
+| `running` | Recent activity, or a user question / tool call was just issued |
+| `awaiting_approval` | A tool call has had no result for a while and the process is alive, so it may be waiting for approval |
+| `awaiting_input` | The AI is waiting for a user reply or confirmation |
+| `interrupted` | The last message carries an interruption marker |
+| `idle` | The process is alive, but there is no pending question or tool call |
+| `done` | The process has exited and no leftovers were found |
+| `unfinished` | The process has exited but left TODOs, unanswered questions, or incomplete tool calls |
 
-状态不写入 SQLite，而是根据进程快照、Kiro 锁文件、最后消息和文件修改时间实时计算，所以它是近似判断，不是任务系统的最终状态。
+State is not persisted in SQLite. It is computed on the fly from a process snapshot, Kiro lock files, the last message, and file modification times, so it is an approximation rather than the authoritative status from a task system.
 
-## 数据与隐私
+## Data and privacy
 
-默认数据目录为 `~/.ai-session-hub`：
+The default data directory is `~/.ai-session-hub`:
 
-| 数据 | 内容 |
+| Data | Content |
 | --- | --- |
-| `index.db` | 会话元数据、工程目录、源文件路径、会话 ID、截断后的消息内容和全文索引 |
-| `handoff/*.md` | 摘要、最近对话原文、工程路径、续聊命令以及用户提供的交接备注 |
-| WAL 文件 | SQLite 运行期间可能出现的 `index.db-wal`、`index.db-shm` |
+| `index.db` | Session metadata, project directories, source file paths, session IDs, truncated message content, and the full-text index |
+| `handoff/*.md` | Digests, recent raw transcript, project paths, resume commands, and any handoff note you provide |
+| WAL files | `index.db-wal` and `index.db-shm` may appear while SQLite is running |
 
-请注意：
+Please note:
 
-- 默认不联网，但“本地”不等于“公开安全”；其他本机用户、备份软件、终端录屏或拥有 MCP 权限的客户端仍可能看到数据。
-- 不会自动脱敏。消息中的 Token、Cookie、密码、SQL、内部域名、个人信息和源代码可能进入索引或交接包。
-- 工具结果默认不加入全文检索，但仍可能以截断形式写入索引；`ASH_INDEX_TOOL_RESULTS=1` 会进一步把工具结果加入全文检索。
-- `session_read`、`session_digest` 和 `session_handoff` 都可能返回或导出敏感内容；交接包不要提交 Git、上传网盘或粘贴到公共 Issue。
-- 当前版本没有加密、访问控制、自动过期清理或显式的 `0600` 文件权限设置。不要把数据目录放在共享目录、网络盘或公共 CI 工作区。
-- 若会话里出现过真实凭据，应立即按凭据管理流程轮换；删除索引不能撤销已经被复制、备份或发送出去的内容。
+- There is no network access by default, but "local" is not the same as "safe to publish": other users on the machine, backup software, terminal recordings, or clients with MCP access can still see the data.
+- Nothing is redacted automatically. Tokens, cookies, passwords, SQL, internal domains, personal data, and source code in messages can end up in the index or a handoff package.
+- Tool results are excluded from full-text search by default but may still be stored in truncated form; `ASH_INDEX_TOOL_RESULTS=1` additionally adds tool results to full-text search.
+- `session_read`, `session_digest`, and `session_handoff` can all return or export sensitive content. Do not commit handoff packages to Git, upload them to cloud storage, or paste them into public issues.
+- This version has no encryption, no access control, no automatic expiry cleanup, and no explicit `0600` file permissions. Do not place the data directory on a shared folder, network drive, or public CI workspace.
+- If real credentials ever appeared in a session, rotate them through your credential management process immediately. Deleting the index cannot undo content that has already been copied, backed up, or sent elsewhere.
 
-如需清理本地数据，请先停止正在使用 `ash` 的 MCP 客户端，再删除 `~/.ai-session-hub` 下的 `index.db`、WAL 文件和 `handoff` 目录。源会话文件不会被本项目删除。
+To clean up local data, first stop any MCP client using `ash`, then delete `index.db`, the WAL files, and the `handoff` directory under `~/.ai-session-hub`. This project never deletes the original session files.
 
-## 环境变量
+## Environment variables
 
-用于测试、隔离索引或自定义 AI 工具安装位置：
+For testing, isolating the index, or pointing at custom AI tool locations:
 
-| 变量 | 作用 |
+| Variable | Effect |
 | --- | --- |
-| `AI_SESSION_HUB_HOME` | 覆盖索引和交接包的数据目录 |
-| `ASH_CLAUDE_DIR` | 覆盖 Claude 会话目录 |
-| `ASH_CODEX_DIR` | 覆盖 Codex 会话目录；设置后只使用该目录 |
-| `ASH_KIRO_DIR` | 覆盖 Kiro 会话目录 |
-| `ASH_GEMINI_DIR` | 覆盖 Gemini 临时目录 |
-| `ASH_OPENCODE_DB` | 覆盖 OpenCode SQLite 数据库路径 |
-| `ASH_INDEX_TOOL_RESULTS` | 设为 `1` 后将工具结果加入全文检索 |
+| `AI_SESSION_HUB_HOME` | Override the data directory for the index and handoff packages |
+| `ASH_CLAUDE_DIR` | Override the Claude session directory |
+| `ASH_CODEX_DIR` | Override the Codex session directory; when set, only that directory is used |
+| `ASH_KIRO_DIR` | Override the Kiro session directory |
+| `ASH_GEMINI_DIR` | Override the Gemini temp directory |
+| `ASH_OPENCODE_DB` | Override the OpenCode SQLite database path |
+| `ASH_INDEX_TOOL_RESULTS` | Set to `1` to add tool results to full-text search |
 
-建议测试时使用独立的数据目录和会话目录，避免读到真实会话、也避免污染正式索引。本仓库不附带任何会话样例，下面的会话目录需要你自己准备：
+When testing, use a dedicated data directory and session directories to avoid reading real sessions and to avoid polluting your primary index. This repository ships no session samples, so you need to prepare the session directories below yourself:
 
 ```bash
 AI_SESSION_HUB_HOME="$(mktemp -d)" \
@@ -157,33 +159,40 @@ ASH_CLAUDE_DIR="$(mktemp -d)" \
 ash sync --full
 ```
 
-## 设计说明
+## Design notes
 
-- 中文检索使用 SQLite FTS5 `trigram`；少于 3 个字符的查询退化为 `LIKE`。
-- Claude、Codex、Kiro 使用字节偏移增量读取，只消费以换行结尾的完整 JSONL 行。
-- Gemini 和 OpenCode 使用全量解析，因为其源文件或数据库可能整体更新。
-- 会话内容统一裁剪：普通文本最多 24,000 字符，工具调用最多 600 字符，工具结果最多 1,200 字符。
-- 摘要是规则化抽取，不调用模型；摘要结果仍应由使用方自行核实，不能当作事实审计结论。
-- 跨工具交接不伪造目标工具的原生会话格式，而是生成显式 Markdown 交接包并返回启动命令。
+- Chinese search uses SQLite FTS5 `trigram`; queries shorter than 3 characters fall back to `LIKE`.
+- Claude, Codex, and Kiro are read incrementally by byte offset, consuming only complete newline-terminated JSONL lines.
+- Gemini and OpenCode are parsed in full, because their source files or database can be rewritten wholesale.
+- Session content is truncated uniformly: up to 24,000 characters for plain text, 600 for tool calls, and 1,200 for tool results.
+- Digests are rule-based extraction with no model calls. Consumers should still verify them; they are not an authoritative audit result.
+- Cross-tool handoff does not fabricate the target tool's native session format. It produces an explicit Markdown handoff package and returns the launch command.
 
-## 开源与安全边界
+## Open source and security boundary
 
-本仓库只包含源码、锁文件、文档和测试，不应包含任何真实会话、索引库、交接包、凭据或业务数据。提交前建议至少执行：
+This repository should contain only source code, lock files, documentation, and tests — never real sessions, index databases, handoff packages, credentials, or business data. Before committing, run at least:
 
 ```bash
 git status --short
 git ls-files | sort
-rg -n -i --hidden \
-  --glob '!target/**' --glob '!.git/**' \
-  'api[_-]?key|secret|password|passwd|token|private[_-]?key|authorization|bearer|cookie|jdbc:|mongodb(\+srv)?://' .
+git grep -n -I -i -E \
+  'api[_-]?key|secret|password|passwd|token|private[_-]?key|authorization|bearer|cookie|jdbc:|mongodb(\+srv)?://'
 cargo test
 cargo fmt --check
 cargo clippy --all-targets --all-features -- -D warnings
 ```
 
-如果凭据曾经进入 Git 历史，仅删除工作树文件是不够的：应先轮换凭据，再清理历史，并在推送公开仓库前重新检查所有 refs、标签和附件。
+If you prefer [ripgrep](https://github.com/BurntSushi/ripgrep), the equivalent scan is:
 
-## 开发
+```bash
+rg -n -i --hidden \
+  --glob '!target/**' --glob '!.git/**' \
+  'api[_-]?key|secret|password|passwd|token|private[_-]?key|authorization|bearer|cookie|jdbc:|mongodb(\+srv)?://' .
+```
+
+If credentials once entered Git history, deleting the working-tree file is not enough: rotate the credentials first, then rewrite history, and re-check all refs, tags, and attachments before pushing to a public repository.
+
+## Development
 
 ```bash
 cargo test
@@ -191,14 +200,14 @@ cargo fmt
 cargo clippy --all-targets --all-features -- -D warnings
 ```
 
-## 商标与免责声明
+## Trademarks and disclaimer
 
-本项目是独立的第三方工具，与 Anthropic、OpenAI、Amazon、Google、OpenCode 及其他任何厂商均无隶属、赞助或背书关系。Claude、Claude Code、Codex、Kiro、Gemini、OpenCode 等名称与标识归各自权利人所有，本文中仅用于说明本工具所兼容的会话来源。
+This project is an independent third-party tool with no affiliation, sponsorship, or endorsement from Anthropic, OpenAI, Amazon, Google, OpenCode, or any other vendor. Claude, Claude Code, Codex, Kiro, Gemini, OpenCode, and other names and marks belong to their respective owners and are used here only to describe the session sources this tool is compatible with.
 
-本项目只读取运行它的机器上本地已有的会话文件，不修改、不上传、不再分发任何第三方软件的代码或数据。使用者需自行确认对所读取数据拥有相应权限，并遵守所用 AI 工具的服务条款以及所在组织的数据管理规定。
+This project only reads session files that already exist locally on the machine running it. It does not modify, upload, or redistribute any third-party software's code or data. Users are responsible for confirming they have the rights to the data being read, and for complying with the terms of service of the AI tools involved as well as their organization's data governance rules.
 
-## 许可证
+## License
 
-本项目采用 [MIT License](LICENSE)。第三方 Rust 依赖的许可证以各依赖自身发布的许可证文本为准。
+Released under the [MIT License](LICENSE). Third-party Rust dependencies are governed by the license texts published with each dependency.
 
-`rusqlite` 通过 `bundled` 特性静态链接 SQLite；SQLite 本身属于公有领域（public domain）。若分发编译后的二进制，建议随包附带一份第三方许可证清单，例如用 [`cargo-about`](https://github.com/EmbarkStudios/cargo-about) 或 [`cargo-license`](https://github.com/onur/cargo-license) 生成。
+`rusqlite` statically links SQLite through its `bundled` feature; SQLite itself is in the public domain. If you distribute compiled binaries, consider shipping a third-party license inventory generated with a tool such as [`cargo-about`](https://github.com/EmbarkStudios/cargo-about) or [`cargo-license`](https://github.com/onur/cargo-license).
