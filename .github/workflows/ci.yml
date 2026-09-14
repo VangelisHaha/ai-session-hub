@@ -1,0 +1,65 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    name: check (${{ matrix.runner }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        run: |
+          rustup toolchain install stable --profile minimal --component rustfmt,clippy
+          rustup default stable
+
+      - name: cargo fmt
+        run: cargo fmt --check
+
+      - name: cargo clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: cargo test
+        run: cargo test --locked
+
+  npm-package:
+    name: npm package smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install Rust stable
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - name: Build host binary
+        run: cargo build --release --locked
+
+      - name: Assemble npm packages for the host platform only
+        run: |
+          mkdir -p dist/linux-x64
+          cp target/release/ash dist/linux-x64/ash
+          node scripts/npm-prepare.mjs --input dist --output npm/build
+
+      - name: Run the npm shim end to end
+        run: |
+          cd npm/build/ai-session-hub
+          npm install --no-save --no-audit --no-fund ../ai-session-hub-linux-x64
+          AI_SESSION_HUB_HOME="$(mktemp -d)" node bin/ash.js stats

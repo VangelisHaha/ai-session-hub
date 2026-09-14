@@ -13,6 +13,12 @@
 /logs/
 *.log
 
+# npm 打包产物
+/dist/
+/npm/build/
+*.tgz
+node_modules/
+
 # 编辑器与系统产物
 .DS_Store
 .idea/
