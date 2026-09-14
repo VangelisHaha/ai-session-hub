@@ -30,47 +30,41 @@
 
 ## 安装
 
-### 通过 npm 安装（推荐）
+从源码构建。本项目不提供预编译二进制，也没有 npm / Homebrew 包。
 
-直接下载预编译二进制，不需要 Rust 工具链：
-
-```bash
-# 全局安装，提供 `ash` 命令
-npm install -g ai-session-hub
-ash sync --full
-
-# 或者不安装直接试用
-npx -y ai-session-hub@latest stats
-```
-
-| 平台 | 预编译包 | 说明 |
-| --- | --- | --- |
-| macOS arm64 / x64 | 有 | macOS 11+ |
-| Linux x64 / arm64 | 有 | 需要 glibc 2.35+（在 Ubuntu 22.04 上构建） |
-| Linux musl（Alpine） | 无 | 请从源码构建 |
-| Windows（原生） | 无 | 请用 WSL；会话路径依赖 `HOME`，状态判定依赖 `ps` |
-
-`npm install -g ai-session-hub` 会同时安装 `ash` 和 `ai-session-hub` 两个命令。部分系统上 `ash` 也是 Almquist shell 的命令名，如果本机有冲突，用 `ai-session-hub` 这个别名即可。
-
-### 从源码构建
-
-需要 Rust stable 工具链。
+前置条件：Rust stable 工具链（用 [rustup](https://rustup.rs) 安装），以及一个 C 编译器——`rusqlite` 会编译内置的 SQLite。支持 macOS 和 Linux；原生 Windows 不支持（会话路径依赖 `HOME`，状态判定依赖 `ps`），请在 WSL 中使用。
 
 ```bash
+git clone https://github.com/VangelisHaha/ai-session-hub.git
+cd ai-session-hub
 cargo build --release
+
+# 把 `ash` 放进 PATH
 mkdir -p "$HOME/.local/bin"
 ln -sf "$PWD/target/release/ash" "$HOME/.local/bin/ash"
+
+# 首次建全量索引，之后查询会自动增量刷新
 ash sync --full
 ```
 
-如果 `ash` 不在 `PATH` 中，可以直接使用 `target/release/ash`，或将 `$HOME/.local/bin` 加入 `PATH`。
+首次编译要几分钟，因为要编译内置的 SQLite；产物是一个自包含的二进制。
+
+如果本机已有 Rust，又不想把仓库目录长期挂在 `PATH` 上，可以改用 `cargo install --path .`，`ash` 会被安装到 `~/.cargo/bin`。
+
+如果找不到 `ash`，把 `export PATH="$HOME/.local/bin:$PATH"` 加进 shell 配置，或者直接用 `target/release/ash`。
+
+升级时拉代码重编即可，软链会自动指向新二进制：
+
+```bash
+git pull && cargo build --release
+```
 
 ## 快速开始
 
 ```bash
-npm install -g ai-session-hub   # 1. 安装
-ash sync --full                 # 2. 首次建全量索引，之后查询会自动增量刷新
-ash search 计划表 --since 7d
+ash sync --full              # 建索引
+ash search 计划表 --since 7d  # 跨工具搜索
+ash active                   # 看现在有哪些会话在跑
 ```
 
 随后按下文挂载成 MCP server，就可以直接问 AI：
@@ -117,18 +111,18 @@ ash stats
 
 `session_search`、`session_list`、`session_status`、`session_active`、`session_read`、`session_digest`、`session_handoff`、`session_resume_cmd`、`session_sync`、`session_stats`。
 
-MCP 场景建议用全局安装后的 `ash`：客户端每开一个会话都会拉起一次 server，`npx` 每次都要查一遍 registry，会明显拖慢启动。只在临时试用时才用 `npx -y ai-session-hub@latest mcp`。
+下文示例假设 `ash` 已经放进 `PATH`。如果你只是在仓库里编译、没有做软链，把 `ash` 换成 `which ash` 的绝对路径或 `$PWD/target/release/ash`。
 
 ### Kiro CLI
 
 ```bash
-kiro-cli mcp add --name ai-session-hub --command ash --args mcp
+kiro-cli mcp add --name ai-session-hub --command "$HOME/.local/bin/ash" --args mcp
 ```
 
 ### Claude Code
 
 ```bash
-claude mcp add ai-session-hub -- ash mcp
+claude mcp add ai-session-hub -- "$HOME/.local/bin/ash" mcp
 ```
 
 ### Codex
@@ -138,7 +132,7 @@ claude mcp add ai-session-hub -- ash mcp
 ```toml
 [mcp_servers.ai_session_hub]
 type = "stdio"
-command = "ash"
+command = "/absolute/path/to/ash"
 args = ["mcp"]
 ```
 
@@ -150,14 +144,14 @@ args = ["mcp"]
 {
   "mcpServers": {
     "ai-session-hub": {
-      "command": "ash",
+      "command": "/absolute/path/to/ash",
       "args": ["mcp"]
     }
   }
 }
 ```
 
-如果客户端找不到 `PATH` 里的 `ash`（GUI 应用常见，不继承 shell 环境），把 `which ash` 的绝对路径填进去即可。
+这里建议直接写绝对路径：GUI 客户端通常不继承 shell 的 `PATH`。用 `which ash` 拿到路径即可。
 
 MCP 客户端一旦获得访问权限，就可以读取索引中允许返回的会话内容。因此请把 MCP 客户端视为本地敏感数据的同等信任边界。
 
@@ -257,25 +251,6 @@ rg -n -i --hidden \
 cargo test
 cargo fmt
 cargo clippy --all-targets --all-features -- -D warnings
-```
-
-### 发布流程
-
-npm 分发采用平台包模式：`ai-session-hub` 只是一层 Node 转发脚本，真实二进制来自 `ai-session-hub-darwin-arm64` 这类 optional 依赖。`npm/cli/` 是转发脚本源码，`scripts/npm-platforms.mjs` 是平台表的唯一来源，`scripts/npm-prepare.mjs` 负责把构建出的二进制组装成可发布的包。
-
-1. 修改 `Cargo.toml` 的 `version`（顺手 `cargo build` 让 `Cargo.lock` 跟上）。
-2. 提交后打同名 tag：`git tag v0.1.1 && git push origin v0.1.1`。
-3. `.github/workflows/release.yml` 会构建所有目标平台，先发平台包再发主包到 npm，并把 tar 包上传到 GitHub Release。
-
-工作流需要仓库 secret `NPM_TOKEN`（有发布权限的 automation token）。`npm publish --provenance` 要求仓库是公开的；如果仓库保持私有，去掉这个参数。
-
-本地演练打包：
-
-```bash
-cargo build --release
-mkdir -p dist/darwin-arm64 && cp target/release/ash dist/darwin-arm64/ash
-node scripts/npm-prepare.mjs --input dist --output npm/build
-npm pack --dry-run npm/build/ai-session-hub
 ```
 
 ## 商标与免责声明

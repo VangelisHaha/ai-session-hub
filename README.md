@@ -30,47 +30,41 @@ Source files are read-only. The index and handoff packages are written to a sepa
 
 ## Installation
 
-### From npm (recommended)
+Build from source. There are no prebuilt binaries and no npm/Homebrew package.
 
-Prebuilt binaries, no Rust toolchain needed:
-
-```bash
-# Global install; provides the `ash` command
-npm install -g ai-session-hub
-ash sync --full
-
-# Or try it without installing
-npx -y ai-session-hub@latest stats
-```
-
-| Platform | Prebuilt | Notes |
-| --- | --- | --- |
-| macOS arm64 / x64 | yes | macOS 11+ |
-| Linux x64 / arm64 | yes | glibc 2.35+ (built on Ubuntu 22.04) |
-| Linux musl (Alpine) | no | build from source |
-| Windows (native) | no | use WSL; session paths rely on `HOME` and liveness relies on `ps` |
-
-`npm install -g ai-session-hub` installs both `ash` and an `ai-session-hub` alias. `ash` is also the name of the Almquist shell on some systems, so if that matters on your machine, use the `ai-session-hub` alias.
-
-### From source
-
-Requires the Rust stable toolchain.
+Requirements: the Rust stable toolchain (install via [rustup](https://rustup.rs)), plus a C compiler, because `rusqlite` compiles a bundled SQLite. macOS and Linux are supported; native Windows is not (session paths rely on `HOME` and liveness relies on `ps`), so use WSL there.
 
 ```bash
+git clone https://github.com/VangelisHaha/ai-session-hub.git
+cd ai-session-hub
 cargo build --release
+
+# Put `ash` on your PATH
 mkdir -p "$HOME/.local/bin"
 ln -sf "$PWD/target/release/ash" "$HOME/.local/bin/ash"
+
+# Build the index once; later queries refresh incrementally
 ash sync --full
 ```
 
-If `ash` is not on your `PATH`, call `target/release/ash` directly, or add `$HOME/.local/bin` to `PATH`.
+The first build takes a few minutes because of the bundled SQLite; the result is a single self-contained binary.
+
+If you already have Rust and would rather not keep the checkout on your `PATH`, `cargo install --path .` puts `ash` in `~/.cargo/bin` instead.
+
+If `ash` is not found, either add `export PATH="$HOME/.local/bin:$PATH"` to your shell rc, or call `target/release/ash` directly.
+
+To upgrade, pull and rebuild; the symlink then points at the new binary:
+
+```bash
+git pull && cargo build --release
+```
 
 ## Quick start
 
 ```bash
-npm install -g ai-session-hub   # 1. install
-ash sync --full                 # 2. build the index once; later queries refresh incrementally
-ash search "some topic" --since 7d
+ash sync --full                    # build the index
+ash search "some topic" --since 7d # search across all tools
+ash active                         # what is running right now
 ```
 
 Then mount it as an MCP server (see below) and ask your AI things like:
@@ -117,18 +111,18 @@ A session UID looks like `kiro:<session-id>`. Queries also accept a full UID, a 
 
 `session_search`, `session_list`, `session_status`, `session_active`, `session_read`, `session_digest`, `session_handoff`, `session_resume_cmd`, `session_sync`, `session_stats`.
 
-A globally installed `ash` is the recommended command for MCP: the client spawns the server on every session, and `npx` would add a registry lookup and startup delay each time. Use `npx -y ai-session-hub@latest mcp` only when you want to try it without installing.
+A globally installed `ash` is used in the examples below. If you built into the checkout without a symlink, replace `ash` with the absolute path from `which ash` or `$PWD/target/release/ash`.
 
 ### Kiro CLI
 
 ```bash
-kiro-cli mcp add --name ai-session-hub --command ash --args mcp
+kiro-cli mcp add --name ai-session-hub --command "$HOME/.local/bin/ash" --args mcp
 ```
 
 ### Claude Code
 
 ```bash
-claude mcp add ai-session-hub -- ash mcp
+claude mcp add ai-session-hub -- "$HOME/.local/bin/ash" mcp
 ```
 
 ### Codex
@@ -138,7 +132,7 @@ Add to `~/.codex/config.toml`:
 ```toml
 [mcp_servers.ai_session_hub]
 type = "stdio"
-command = "ash"
+command = "/absolute/path/to/ash"
 args = ["mcp"]
 ```
 
@@ -150,14 +144,14 @@ Most clients accept this shape in their `mcp.json`:
 {
   "mcpServers": {
     "ai-session-hub": {
-      "command": "ash",
+      "command": "/absolute/path/to/ash",
       "args": ["mcp"]
     }
   }
 }
 ```
 
-If the client cannot find `ash` on `PATH` (common for GUI apps that do not inherit your shell environment), use the absolute path from `which ash`.
+Prefer an absolute path here: GUI clients often do not inherit your shell `PATH`. Run `which ash` to get it.
 
 Any MCP client with access can read whatever session content the index is allowed to return. Treat MCP clients as the same trust boundary as your local sensitive data.
 
@@ -257,25 +251,6 @@ If credentials once entered Git history, deleting the working-tree file is not e
 cargo test
 cargo fmt
 cargo clippy --all-targets --all-features -- -D warnings
-```
-
-### Releasing
-
-npm distribution follows the platform-package pattern: `ai-session-hub` is a thin Node shim, and the real binary comes from an optional dependency such as `ai-session-hub-darwin-arm64`. `npm/cli/` holds the shim source, `scripts/npm-platforms.mjs` is the single source of truth for the platform table, and `scripts/npm-prepare.mjs` assembles publishable packages from built binaries.
-
-1. Bump `version` in `Cargo.toml` (and run `cargo build` so `Cargo.lock` follows).
-2. Commit, then tag with the matching version: `git tag v0.1.1 && git push origin v0.1.1`.
-3. `.github/workflows/release.yml` builds all targets, publishes the platform packages then the main package to npm, and uploads tarballs to the GitHub Release.
-
-The workflow needs an `NPM_TOKEN` repository secret (an automation token with publish rights). `npm publish --provenance` requires a public repository; drop that flag if the repository stays private.
-
-To rehearse the packaging locally:
-
-```bash
-cargo build --release
-mkdir -p dist/darwin-arm64 && cp target/release/ash dist/darwin-arm64/ash
-node scripts/npm-prepare.mjs --input dist --output npm/build
-npm pack --dry-run npm/build/ai-session-hub
 ```
 
 ## Trademarks and disclaimer
