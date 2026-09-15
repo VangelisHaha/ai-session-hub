@@ -430,6 +430,7 @@ fn normalize_tool(tool: Option<&str>) -> Result<Option<String>> {
     let normalized = match lowered.as_str() {
         "claude-code" | "cc" => "claude",
         "kiro-cli" => "kiro",
+        "kiroide" | "kiro_ide" | "kiro-agent" | "kiroagent" | "ide" => "kiro-ide",
         "gemini-cli" => "gemini",
         other => other,
     };

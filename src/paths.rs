@@ -47,6 +47,20 @@ pub fn kiro_sessions_dir() -> PathBuf {
     home_dir().join(".kiro/sessions/cli")
 }
 
+/// Kiro IDE（kiro.kiroagent 扩展）的会话目录，macOS 与 Linux 位置不同，两处都试
+pub fn kiro_ide_session_dirs() -> Vec<PathBuf> {
+    if let Some(dir) = std::env::var_os("ASH_KIRO_IDE_DIR") {
+        return vec![PathBuf::from(dir)];
+    }
+    let suffix = "User/globalStorage/kiro.kiroagent/workspace-sessions";
+    vec![
+        home_dir()
+            .join("Library/Application Support/Kiro")
+            .join(suffix),
+        home_dir().join(".config/Kiro").join(suffix),
+    ]
+}
+
 pub fn gemini_tmp_dir() -> PathBuf {
     if let Some(dir) = std::env::var_os("ASH_GEMINI_DIR") {
         return PathBuf::from(dir);

@@ -4,15 +4,17 @@
 //! **跨工具**无法迁移原生会话（历史格式、tool_use id、模型都不通），
 //! 所以统一走「新会话 + 交接包」：把交接文件路径塞进第一条 prompt。
 
-use crate::adapters::{claude, codex, gemini, kiro, opencode};
+use crate::adapters::{claude, codex, gemini, kiro, kiro_ide, opencode};
 
-pub const SUPPORTED_TOOLS: [&str; 5] = ["claude", "codex", "kiro", "gemini", "opencode"];
+pub const SUPPORTED_TOOLS: [&str; 6] =
+    ["claude", "codex", "kiro", "kiro-ide", "gemini", "opencode"];
 
 pub fn resume_command(tool: &str, session_id: &str) -> String {
     match tool {
         "claude" => claude::resume_command(session_id),
         "codex" => codex::resume_command(session_id),
         "kiro" => kiro::resume_command(session_id),
+        "kiro-ide" => kiro_ide::resume_command(session_id),
         "gemini" => gemini::resume_command(session_id),
         "opencode" => opencode::resume_command(session_id),
         other => format!("# 未知工具 {other}，无法生成恢复命令"),
@@ -26,6 +28,8 @@ pub fn resume_with_prompt(tool: &str, session_id: &str, prompt: &str) -> String 
         "claude" => format!("claude --resume {session_id} {quoted}"),
         "codex" => format!("codex exec resume {session_id} {quoted}"),
         "kiro" => format!("kiro-cli chat --resume-id {session_id} {quoted}"),
+        // IDE 会话没有命令行 resume，退化成「交接给 Kiro CLI」
+        "kiro-ide" => format!("kiro-cli chat {quoted}"),
         "gemini" => format!("gemini --resume {session_id} {quoted}"),
         "opencode" => format!("opencode run -s {session_id} {quoted}"),
         other => format!("# 未知工具 {other}"),
@@ -39,6 +43,12 @@ pub fn handoff_command(tool: &str, brief_path: &str, note: &str) -> String {
         "claude" => format!("claude {quoted}"),
         "codex" => format!("codex {quoted}"),
         "kiro" => format!("kiro-cli chat {quoted}"),
+        // Kiro IDE 只能手动开会话，给出要粘贴的 prompt
+        "kiro-ide" => {
+            format!(
+                "# 在 Kiro IDE 中新建聊天并粘贴：先读 {brief_path} 了解上下文，然后继续：{note}"
+            )
+        }
         "gemini" => format!("gemini {quoted}"),
         "opencode" => format!("opencode run {quoted}"),
         other => format!("# 未知工具 {other}"),

@@ -8,7 +8,7 @@ Local session search, context recall, and cross-tool handoff across AI coding to
 
 ## Features
 
-- Search history across Claude Code, Codex, Kiro CLI, Gemini CLI, and OpenCode.
+- Search history across Claude Code, Codex, Kiro CLI, Kiro IDE, Gemini CLI, and OpenCode.
 - Filter by project directory, tool, time range, and role, with Chinese phrase search supported.
 - Read session transcripts, with a character budget and tool output stripped by default.
 - Produce deterministic digests: user intent, assistant takeaways, commands executed, file paths, and likely unfinished items.
@@ -23,8 +23,13 @@ Local session search, context recall, and cross-tool handoff across AI coding to
 | Claude Code | `~/.claude/projects/**/*.jsonl` | Incremental JSONL by byte offset |
 | Codex | `~/.codex/sessions/**/*.jsonl`, `~/.codex/archived_sessions/**/*.jsonl` | Incremental JSONL by byte offset |
 | Kiro CLI | `~/.kiro/sessions/cli/*.jsonl` plus same-named `.json` | Incremental JSONL by byte offset |
+| Kiro IDE | `<Kiro user dir>/globalStorage/kiro.kiroagent/workspace-sessions/<b64 workspace>/<sessionId>.json` | Full JSON parse |
 | Gemini CLI | `~/.gemini/tmp/*/chats/session-*.json` | Full JSON parse |
 | OpenCode | `~/.local/share/opencode/opencode.db` | Full SQLite parse |
+
+The Kiro IDE user directory is `~/Library/Application Support/Kiro/User` on macOS and `~/.config/Kiro/User` on Linux; both are probed. Kiro IDE sessions use the tool id `kiro-ide` and are separate from Kiro CLI (`kiro`): the session IDs are not interchangeable and IDE sessions cannot be resumed from the command line.
+
+Two limitations come from the Kiro IDE files themselves, not from parsing: in agent mode the assistant reply is often persisted as a placeholder such as `On it.` rather than the real answer, and messages carry no individual timestamps, so everything falls back to the session's creation time. User prompts, titles, and workspace paths are complete.
 
 Source files are read-only. The index and handoff packages are written to a separate data directory and never back into the sources above.
 
@@ -199,7 +204,8 @@ For testing, isolating the index, or pointing at custom AI tool locations:
 | `AI_SESSION_HUB_HOME` | Override the data directory for the index and handoff packages |
 | `ASH_CLAUDE_DIR` | Override the Claude session directory |
 | `ASH_CODEX_DIR` | Override the Codex session directory; when set, only that directory is used |
-| `ASH_KIRO_DIR` | Override the Kiro session directory |
+| `ASH_KIRO_DIR` | Override the Kiro CLI session directory |
+| `ASH_KIRO_IDE_DIR` | Override the Kiro IDE `workspace-sessions` directory |
 | `ASH_GEMINI_DIR` | Override the Gemini temp directory |
 | `ASH_OPENCODE_DB` | Override the OpenCode SQLite database path |
 | `ASH_INDEX_TOOL_RESULTS` | Set to `1` to add tool results to full-text search |
@@ -215,8 +221,8 @@ ash sync --full
 ## Design notes
 
 - Chinese search uses SQLite FTS5 `trigram`; queries shorter than 3 characters fall back to `LIKE`.
-- Claude, Codex, and Kiro are read incrementally by byte offset, consuming only complete newline-terminated JSONL lines.
-- Gemini and OpenCode are parsed in full, because their source files or database can be rewritten wholesale.
+- Claude, Codex, and Kiro CLI are read incrementally by byte offset, consuming only complete newline-terminated JSONL lines.
+- Kiro IDE, Gemini, and OpenCode are parsed in full, because their source files or database can be rewritten wholesale.
 - Session content is truncated uniformly: up to 24,000 characters for plain text, 600 for tool calls, and 1,200 for tool results.
 - Digests are rule-based extraction with no model calls. Consumers should still verify them; they are not an authoritative audit result.
 - Cross-tool handoff does not fabricate the target tool's native session format. It produces an explicit Markdown handoff package and returns the launch command.

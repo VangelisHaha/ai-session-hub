@@ -5,12 +5,14 @@
 //! 只从上次消费到的位置往后读，且只消费以换行结尾的完整行（尾部半行留到下次）。
 //! Codex 本机会话目录已有 1.7G，全量重读代价太高，偏移增量是必须的。
 //!
-//! Gemini（单文件 JSON）与 OpenCode（SQLite）体量小且会整体重写，采用全量重解析。
+//! Gemini（单文件 JSON）、Kiro IDE（每会话一个 JSON）与 OpenCode（SQLite）
+//! 体量小且会整体重写，采用全量重解析。
 
 pub mod claude;
 pub mod codex;
 pub mod gemini;
 pub mod kiro;
+pub mod kiro_ide;
 pub mod opencode;
 
 use crate::model::SessionPayload;
@@ -56,6 +58,7 @@ pub fn all_adapters() -> Vec<Box<dyn Adapter>> {
         Box::new(claude::ClaudeAdapter),
         Box::new(codex::CodexAdapter),
         Box::new(kiro::KiroAdapter),
+        Box::new(kiro_ide::KiroIdeAdapter),
         Box::new(gemini::GeminiAdapter),
         Box::new(opencode::OpenCodeAdapter),
     ]
@@ -146,6 +149,16 @@ pub fn parse_ts(value: &Value) -> Option<i64> {
                 chrono::NaiveDateTime::parse_from_str(text, "%Y-%m-%dT%H:%M:%S%.f")
                     .ok()
                     .map(|dt| dt.and_utc().timestamp_millis())
+            })
+            // Kiro IDE 的 sessions.json 把毫秒时间戳写成字符串（"1782695302381"）。
+            // 只认 10 位以上的纯数字，避免把 "2026" 这类短数字误当成时间戳。
+            .or_else(|| {
+                let digits = text.trim();
+                if digits.len() >= 10 && digits.chars().all(|c| c.is_ascii_digit()) {
+                    parse_ts(&Value::Number(digits.parse::<u64>().ok()?.into()))
+                } else {
+                    None
+                }
             }),
         _ => None,
     }
@@ -288,6 +301,18 @@ mod tests {
             parse_ts(&serde_json::json!(1780022615i64)),
             Some(1780022615000)
         );
+    }
+
+    #[test]
+    fn numeric_strings_are_accepted_as_epoch() {
+        // Kiro IDE 的 sessions.json：毫秒时间戳写成字符串
+        assert_eq!(
+            parse_ts(&Value::String("1782695302381".to_string())),
+            Some(1782695302381)
+        );
+        // 短数字不当时间戳
+        assert_eq!(parse_ts(&Value::String("2026".to_string())), None);
+        assert_eq!(parse_ts(&Value::String("abc".to_string())), None);
     }
 
     #[test]

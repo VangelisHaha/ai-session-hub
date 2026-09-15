@@ -8,7 +8,7 @@
 
 ## 功能
 
-- 跨 Claude Code、Codex、Kiro CLI、Gemini CLI、OpenCode 检索历史会话。
+- 跨 Claude Code、Codex、Kiro CLI、Kiro IDE、Gemini CLI、OpenCode 检索历史会话。
 - 按工程目录、工具、时间、角色过滤，并支持中文短语检索。
 - 读取会话正文，默认限制字符预算并剔除工具输出。
 - 生成确定性摘要：用户诉求、助手要点、执行命令、文件路径和可能未完成事项。
@@ -23,8 +23,13 @@
 | Claude Code | `~/.claude/projects/**/*.jsonl` | JSONL 字节偏移增量 |
 | Codex | `~/.codex/sessions/**/*.jsonl`、`~/.codex/archived_sessions/**/*.jsonl` | JSONL 字节偏移增量 |
 | Kiro CLI | `~/.kiro/sessions/cli/*.jsonl` 及同名 `.json` | JSONL 字节偏移增量 |
+| Kiro IDE | `<Kiro 用户目录>/globalStorage/kiro.kiroagent/workspace-sessions/<工作区 base64>/<sessionId>.json` | JSON 全量解析 |
 | Gemini CLI | `~/.gemini/tmp/*/chats/session-*.json` | JSON 全量解析 |
 | OpenCode | `~/.local/share/opencode/opencode.db` | SQLite 全量解析 |
+
+Kiro IDE 的用户目录在 macOS 是 `~/Library/Application Support/Kiro/User`，Linux 是 `~/.config/Kiro/User`，两处都会尝试。IDE 会话的工具标识是 `kiro-ide`，与 Kiro CLI（`kiro`）相互独立：会话 ID 不通用，且 IDE 会话无法用命令行恢复。
+
+有两个限制来自 Kiro IDE 的存储本身，不是解析问题：agent 模式下助手回复常被写成 `On it.` 这类占位符，真实回复不落盘；消息级没有时间戳，全部回落到会话创建时间。用户提问、标题、工作区路径是完整的。
 
 源文件只读。索引和交接包写入独立的数据目录，不会回写上述会话来源。
 
@@ -199,7 +204,8 @@ MCP 客户端一旦获得访问权限，就可以读取索引中允许返回的�
 | `AI_SESSION_HUB_HOME` | 覆盖索引和交接包的数据目录 |
 | `ASH_CLAUDE_DIR` | 覆盖 Claude 会话目录 |
 | `ASH_CODEX_DIR` | 覆盖 Codex 会话目录；设置后只使用该目录 |
-| `ASH_KIRO_DIR` | 覆盖 Kiro 会话目录 |
+| `ASH_KIRO_DIR` | 覆盖 Kiro CLI 会话目录 |
+| `ASH_KIRO_IDE_DIR` | 覆盖 Kiro IDE 的 `workspace-sessions` 目录 |
 | `ASH_GEMINI_DIR` | 覆盖 Gemini 临时目录 |
 | `ASH_OPENCODE_DB` | 覆盖 OpenCode SQLite 数据库路径 |
 | `ASH_INDEX_TOOL_RESULTS` | 设为 `1` 后将工具结果加入全文检索 |
@@ -215,8 +221,8 @@ ash sync --full
 ## 设计说明
 
 - 中文检索使用 SQLite FTS5 `trigram`；少于 3 个字符的查询退化为 `LIKE`。
-- Claude、Codex、Kiro 使用字节偏移增量读取，只消费以换行结尾的完整 JSONL 行。
-- Gemini 和 OpenCode 使用全量解析，因为其源文件或数据库可能整体更新。
+- Claude、Codex、Kiro CLI 使用字节偏移增量读取，只消费以换行结尾的完整 JSONL 行。
+- Kiro IDE、Gemini 和 OpenCode 使用全量解析，因为其源文件或数据库可能整体更新。
 - 会话内容统一裁剪：普通文本最多 24,000 字符，工具调用最多 600 字符，工具结果最多 1,200 字符。
 - 摘要是规则化抽取，不调用模型；摘要结果仍应由使用方自行核实，不能当作事实审计结论。
 - 跨工具交接不伪造目标工具的原生会话格式，而是生成显式 Markdown 交接包并返回启动命令。
