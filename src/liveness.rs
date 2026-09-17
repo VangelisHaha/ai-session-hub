@@ -368,15 +368,16 @@ fn file_mtime_ms(path: &str) -> Option<i64> {
     Some(duration.as_millis() as i64)
 }
 
-/// `ps` 一次性快照，避免逐个会话 fork 进程
+/// 一次性进程快照，避免逐个会话 fork 进程。
+/// unix 走 `ps`，Windows 走 PowerShell 的 Win32_Process，两边都输出 "pid 命令行"，共用下面的解析。
 fn snapshot_processes() -> HashMap<i32, String> {
-    let output = std::process::Command::new("ps")
-        .args(["-eo", "pid=,command="])
-        .output();
-    let Ok(output) = output else {
+    let Some(text) = crate::platform::process_snapshot_text() else {
         return HashMap::new();
     };
-    let text = String::from_utf8_lossy(&output.stdout);
+    parse_process_snapshot(&text)
+}
+
+fn parse_process_snapshot(text: &str) -> HashMap<i32, String> {
     let mut map = HashMap::new();
     for line in text.lines() {
         let trimmed = line.trim_start();
@@ -578,6 +579,32 @@ mod tests {
             false,
         );
         assert_eq!(unfinished, SessionState::Unfinished);
+    }
+
+    /// unix 的 `ps` 与 Windows 的 Win32_Process 都被规整成 "pid 命令行"，共用一个解析器。
+    /// 这里用 Windows 形状的输出（反斜杠路径、带空格的目录、引号）验证那一侧也能解析。
+    #[test]
+    fn windows_shaped_snapshot_is_parsed_too() {
+        let unix = "  501 /usr/bin/pi --session 01a0aece-8e56\n 1234 ps -eo pid=,command=\n";
+        let parsed = parse_process_snapshot(unix);
+        assert_eq!(
+            parsed.get(&501).map(String::as_str),
+            Some("/usr/bin/pi --session 01a0aece-8e56")
+        );
+
+        let windows = concat!(
+            "4512 \"C:\\Program Files\\WorkBuddy\\codebuddy.cmd\" --resume f5068740-b383\r\n",
+            "9001 powershell -NoProfile -Command Get-CimInstance\r\n",
+            "\r\n",
+            "not-a-pid something\r\n",
+        );
+        let parsed = parse_process_snapshot(windows);
+        assert_eq!(parsed.len(), 2, "解析结果: {parsed:?}");
+        let cmd = parsed.get(&4512).expect("缺少 4512");
+        assert!(cmd.contains("Program Files"));
+        assert!(cmd.ends_with("f5068740-b383"), "结尾没去掉 \\r：{cmd:?}");
+        // 命令行里的 --resume <id> 仍能被抠出来
+        assert_eq!(extract_session_ids(cmd), vec!["f5068740-b383".to_string()]);
     }
 
     #[test]

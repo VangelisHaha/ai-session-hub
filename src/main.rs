@@ -14,6 +14,7 @@ mod mcp;
 mod model;
 mod ops;
 mod paths;
+mod platform;
 mod tools;
 
 use anyhow::{anyhow, Result};

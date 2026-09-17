@@ -80,9 +80,10 @@ pub fn handoff_command(tool: &str, brief_path: &str, note: &str) -> String {
     }
 }
 
-/// 单引号包裹，内部单引号按 shell 规则转义，避免 prompt 里的引号 / 反引号被展开
+/// 给 prompt 加引号，避免里面的引号 / 反引号 / `$` 被 shell 展开。
+/// unix 用 POSIX sh 规则，Windows 用 PowerShell 规则（cmd.exe 不认单引号）。
 pub fn shell_quote(input: &str) -> String {
-    format!("'{}'", input.replace('\'', "'\\''"))
+    crate::platform::quote_with(crate::platform::quote_style(), input)
 }
 
 #[cfg(test)]

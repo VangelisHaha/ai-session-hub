@@ -46,7 +46,9 @@ WorkBuddy（腾讯 CodeBuddy 的企业换皮）与 Claude Code 布局同构，�
 
 从源码构建。本项目不提供预编译二进制，也没有 npm / Homebrew 包。
 
-前置条件：Rust stable 工具链（用 [rustup](https://rustup.rs) 安装），以及一个 C 编译器——`rusqlite` 会编译内置的 SQLite。支持 macOS 和 Linux；原生 Windows 不支持（会话路径依赖 `HOME`，状态判定依赖 `ps`），请在 WSL 中使用。
+前置条件：Rust stable 工具链（用 [rustup](https://rustup.rs) 安装），以及一个 C 编译器——`rusqlite` 会编译内置的 SQLite。macOS、Linux、Windows 三个平台都在 CI 里编译并跑测试。
+
+Windows 上的平台差异已处理：主目录回落到 `USERPROFILE`（或 `HOMEDRIVE`+`HOMEPATH`），Kiro IDE 额外探测 `%APPDATA%\Kiro`，`PATH` 按 `;` 分割且可执行文件会匹配 `.exe` / `.cmd` / `.bat` / `.ps1`，生成的命令按 PowerShell 而非 POSIX sh 加引号，会话状态背后的进程快照用 `Get-CimInstance Win32_Process` 取代 `ps`。**没有**做的是逐个核实各 AI 工具在 Windows 上的会话存放位置——上表里的路径是 macOS/Linux 的布局。如果你机器上某个工具存在别处，用 `ASH_<TOOL>_DIR` 指过去即可。
 
 ```bash
 git clone https://github.com/VangelisHaha/ai-session-hub.git

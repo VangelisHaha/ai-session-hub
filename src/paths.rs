@@ -2,10 +2,25 @@
 
 use std::path::PathBuf;
 
+/// 用户主目录。Windows 上没有 `HOME`，要退回 `USERPROFILE` / `HOMEDRIVE`+`HOMEPATH`
 pub fn home_dir() -> PathBuf {
-    std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/"))
+    home_dir_from(|key| std::env::var_os(key).map(|value| value.to_string_lossy().to_string()))
+}
+
+/// 纯逻辑版本，便于单测 Windows 分支（不依赖当前进程的真实环境变量）
+fn home_dir_from(lookup: impl Fn(&str) -> Option<String>) -> PathBuf {
+    for key in ["HOME", "USERPROFILE"] {
+        if let Some(value) = lookup(key).filter(|value| !value.trim().is_empty()) {
+            return PathBuf::from(value);
+        }
+    }
+    // Windows 上偶尔只有 HOMEDRIVE + HOMEPATH（如 C: + \Users\x）
+    if let (Some(drive), Some(path)) = (lookup("HOMEDRIVE"), lookup("HOMEPATH")) {
+        if !drive.trim().is_empty() && !path.trim().is_empty() {
+            return PathBuf::from(format!("{drive}{path}"));
+        }
+    }
+    PathBuf::from("/")
 }
 
 /// 数据根目录，可用 AI_SESSION_HUB_HOME 覆盖（测试与多份索引隔离用）
@@ -47,18 +62,23 @@ pub fn kiro_sessions_dir() -> PathBuf {
     home_dir().join(".kiro/sessions/cli")
 }
 
-/// Kiro IDE（kiro.kiroagent 扩展）的会话目录，macOS 与 Linux 位置不同，两处都试
+/// Kiro IDE（kiro.kiroagent 扩展）的会话目录，各平台位置不同，全部试一遍：
+/// macOS `~/Library/Application Support/Kiro`、Linux `~/.config/Kiro`、Windows `%APPDATA%\Kiro`
 pub fn kiro_ide_session_dirs() -> Vec<PathBuf> {
     if let Some(dir) = std::env::var_os("ASH_KIRO_IDE_DIR") {
         return vec![PathBuf::from(dir)];
     }
     let suffix = "User/globalStorage/kiro.kiroagent/workspace-sessions";
-    vec![
+    let mut dirs = vec![
         home_dir()
             .join("Library/Application Support/Kiro")
             .join(suffix),
         home_dir().join(".config/Kiro").join(suffix),
-    ]
+    ];
+    if let Some(appdata) = std::env::var_os("APPDATA") {
+        dirs.push(PathBuf::from(appdata).join("Kiro").join(suffix));
+    }
+    dirs
 }
 
 /// Kimi Code CLI（`kimi`）的会话根目录：
@@ -112,4 +132,51 @@ pub fn opencode_db_path() -> PathBuf {
         return PathBuf::from(path);
     }
     home_dir().join(".local/share/opencode/opencode.db")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn env_of<'a>(pairs: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<String> + 'a {
+        move |key| {
+            pairs
+                .iter()
+                .find(|(name, _)| *name == key)
+                .map(|(_, value)| value.to_string())
+        }
+    }
+
+    #[test]
+    fn home_prefers_home_then_userprofile() {
+        assert_eq!(
+            home_dir_from(env_of(&[
+                ("HOME", "/Users/x"),
+                ("USERPROFILE", r"C:\Users\x")
+            ])),
+            PathBuf::from("/Users/x")
+        );
+        // Windows 上通常没有 HOME
+        assert_eq!(
+            home_dir_from(env_of(&[("USERPROFILE", r"C:\Users\x")])),
+            PathBuf::from(r"C:\Users\x")
+        );
+    }
+
+    #[test]
+    fn home_falls_back_to_homedrive_plus_homepath() {
+        assert_eq!(
+            home_dir_from(env_of(&[("HOMEDRIVE", "C:"), ("HOMEPATH", r"\Users\x")])),
+            PathBuf::from(r"C:\Users\x")
+        );
+    }
+
+    #[test]
+    fn blank_values_are_ignored() {
+        assert_eq!(
+            home_dir_from(env_of(&[("HOME", "   "), ("USERPROFILE", r"D:\me")])),
+            PathBuf::from(r"D:\me")
+        );
+        assert_eq!(home_dir_from(env_of(&[])), PathBuf::from("/"));
+    }
 }

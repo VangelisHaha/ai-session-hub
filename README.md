@@ -46,7 +46,9 @@ Source files are read-only. The index and handoff packages are written to a sepa
 
 Build from source. There are no prebuilt binaries and no npm/Homebrew package.
 
-Requirements: the Rust stable toolchain (install via [rustup](https://rustup.rs)), plus a C compiler, because `rusqlite` compiles a bundled SQLite. macOS and Linux are supported; native Windows is not (session paths rely on `HOME` and liveness relies on `ps`), so use WSL there.
+Requirements: the Rust stable toolchain (install via [rustup](https://rustup.rs)), plus a C compiler, because `rusqlite` compiles a bundled SQLite. macOS, Linux, and Windows are all built and tested in CI.
+
+On Windows the platform differences are handled: the home directory falls back to `USERPROFILE` (or `HOMEDRIVE`+`HOMEPATH`), Kiro IDE is also probed under `%APPDATA%\Kiro`, `PATH` is split on `;` and executables are matched against `.exe` / `.cmd` / `.bat` / `.ps1`, generated commands are quoted for PowerShell rather than POSIX sh, and the process snapshot behind session state comes from `Get-CimInstance Win32_Process` instead of `ps`. What has *not* been surveyed is where every AI tool stores its sessions on Windows — the paths in the table above are the macOS/Linux layouts. If a tool keeps them elsewhere on your machine, point `ASH_<TOOL>_DIR` at the right directory.
 
 ```bash
 git clone https://github.com/VangelisHaha/ai-session-hub.git
