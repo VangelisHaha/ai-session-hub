@@ -78,6 +78,28 @@ pub fn pi_sessions_dir() -> PathBuf {
     home_dir().join(".pi/agent/sessions")
 }
 
+/// WorkBuddy（腾讯 CodeBuddy 换皮）的会话目录。
+///
+/// 桌面应用写 `~/.workbuddy/projects`，独立 CLI（`codebuddy` / `cbc`）写 `~/.codebuddy/projects`，
+/// 两处格式完全一致，都要扫。
+pub fn workbuddy_project_dirs() -> Vec<PathBuf> {
+    if let Some(dir) = std::env::var_os("ASH_WORKBUDDY_DIR") {
+        return vec![PathBuf::from(dir)];
+    }
+    vec![
+        home_dir().join(".workbuddy/projects"),
+        home_dir().join(".codebuddy/projects"),
+    ]
+}
+
+/// WorkBuddy 的活跃会话心跳目录：`<root>/sessions/<pid>.json`，内含 pid 与 sessionId
+pub fn workbuddy_session_dirs() -> Vec<PathBuf> {
+    workbuddy_project_dirs()
+        .into_iter()
+        .filter_map(|dir| dir.parent().map(|base| base.join("sessions")))
+        .collect()
+}
+
 pub fn gemini_tmp_dir() -> PathBuf {
     if let Some(dir) = std::env::var_os("ASH_GEMINI_DIR") {
         return PathBuf::from(dir);

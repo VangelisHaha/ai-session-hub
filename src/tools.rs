@@ -4,10 +4,18 @@
 //! **跨工具**无法迁移原生会话（历史格式、tool_use id、模型都不通），
 //! 所以统一走「新会话 + 交接包」：把交接文件路径塞进第一条 prompt。
 
-use crate::adapters::{claude, codex, gemini, kimi, kiro, kiro_ide, opencode, pi};
+use crate::adapters::{claude, codex, gemini, kimi, kiro, kiro_ide, opencode, pi, workbuddy};
 
-pub const SUPPORTED_TOOLS: [&str; 8] = [
-    "claude", "codex", "kiro", "kiro-ide", "kimi", "pi", "gemini", "opencode",
+pub const SUPPORTED_TOOLS: [&str; 9] = [
+    "claude",
+    "codex",
+    "kiro",
+    "kiro-ide",
+    "kimi",
+    "pi",
+    "workbuddy",
+    "gemini",
+    "opencode",
 ];
 
 pub fn resume_command(tool: &str, session_id: &str) -> String {
@@ -18,6 +26,7 @@ pub fn resume_command(tool: &str, session_id: &str) -> String {
         "kiro-ide" => kiro_ide::resume_command(session_id),
         "kimi" => kimi::resume_command(session_id),
         "pi" => pi::resume_command(session_id),
+        "workbuddy" => workbuddy::resume_command(session_id),
         "gemini" => gemini::resume_command(session_id),
         "opencode" => opencode::resume_command(session_id),
         other => format!("# 未知工具 {other}，无法生成恢复命令"),
@@ -36,6 +45,7 @@ pub fn resume_with_prompt(tool: &str, session_id: &str, prompt: &str) -> String 
         // kimi 不接受位置参数形式的 prompt，只能走 -p 一次性模式
         "kimi" => format!("kimi -r {session_id} -p {quoted}"),
         "pi" => format!("pi --session {session_id} {quoted}"),
+        "workbuddy" => format!("codebuddy --resume {session_id} {quoted}"),
         "gemini" => format!("gemini --resume {session_id} {quoted}"),
         "opencode" => format!("opencode run -s {session_id} {quoted}"),
         other => format!("# 未知工具 {other}"),
@@ -58,6 +68,7 @@ pub fn handoff_command(tool: &str, brief_path: &str, note: &str) -> String {
         "gemini" => format!("gemini {quoted}"),
         "kimi" => format!("kimi -p {quoted}"),
         "pi" => format!("pi {quoted}"),
+        "workbuddy" => format!("codebuddy {quoted}"),
         "opencode" => format!("opencode run {quoted}"),
         other => format!("# 未知工具 {other}"),
     }

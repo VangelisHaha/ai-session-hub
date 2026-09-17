@@ -1,7 +1,7 @@
 //! 各工具的会话解析适配器。
 //!
 //! ## 增量策略
-//! Claude / Codex / Kiro / Kimi / pi 的会话正文都是 append-only 的 JSONL，因此按**字节偏移**增量解析：
+//! Claude / Codex / Kiro / Kimi / pi / WorkBuddy 的会话正文都是 append-only 的 JSONL，因此按**字节偏移**增量解析：
 //! 只从上次消费到的位置往后读，且只消费以换行结尾的完整行（尾部半行留到下次）。
 //! Codex 本机会话目录已有 1.7G，全量重读代价太高，偏移增量是必须的。
 //!
@@ -16,6 +16,7 @@ pub mod kiro;
 pub mod kiro_ide;
 pub mod opencode;
 pub mod pi;
+pub mod workbuddy;
 
 use crate::model::SessionPayload;
 use anyhow::Result;
@@ -63,6 +64,7 @@ pub fn all_adapters() -> Vec<Box<dyn Adapter>> {
         Box::new(kiro_ide::KiroIdeAdapter),
         Box::new(kimi::KimiAdapter),
         Box::new(pi::PiAdapter),
+        Box::new(workbuddy::WorkBuddyAdapter),
         Box::new(gemini::GeminiAdapter),
         Box::new(opencode::OpenCodeAdapter),
     ]

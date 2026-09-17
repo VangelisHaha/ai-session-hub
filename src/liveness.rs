@@ -130,6 +130,8 @@ pub struct LivenessProbe {
     processes: HashMap<i32, String>,
     /// Kiro session_id -> pid
     kiro_locks: HashMap<String, i32>,
+    /// WorkBuddy session_id -> pid（来自 ~/.workbuddy/sessions/<pid>.json 心跳文件）
+    workbuddy_sessions: HashMap<String, i32>,
     /// 命令行里显式带出的会话 ID -> pid
     resumed_sessions: HashMap<String, i32>,
     now_ms: i64,
@@ -170,6 +172,7 @@ impl LivenessProbe {
         Self {
             processes: snapshot_processes(),
             kiro_locks: read_kiro_locks(),
+            workbuddy_sessions: read_workbuddy_sessions(),
             resumed_sessions: HashMap::new(),
             now_ms: chrono::Utc::now().timestamp_millis(),
         }
@@ -189,6 +192,11 @@ impl LivenessProbe {
     fn holder_pid(&self, session: &SessionRow) -> Option<i32> {
         if session.tool == "kiro" {
             if let Some(pid) = self.kiro_locks.get(&session.session_id) {
+                return Some(*pid);
+            }
+        }
+        if session.tool == "workbuddy" {
+            if let Some(pid) = self.workbuddy_sessions.get(&session.session_id) {
                 return Some(*pid);
             }
         }
@@ -405,6 +413,36 @@ fn read_kiro_locks() -> HashMap<String, i32> {
             .and_then(|value| value.get("pid").and_then(serde_json::Value::as_i64))
         {
             map.insert(session_id.to_string(), pid as i32);
+        }
+    }
+    map
+}
+
+/// 读 WorkBuddy 的会话心跳：`~/.workbuddy/sessions/<pid>.json` → `{"pid":123,"sessionId":"..."}`。
+/// 比命令行匹配可靠：WorkBuddy 是 Electron 应用，会话 ID 不出现在命令行里。
+/// prewarm / interactive-<pid> 这类非真实会话的 sessionId 不会命中索引，无需额外过滤。
+fn read_workbuddy_sessions() -> HashMap<String, i32> {
+    let mut map = HashMap::new();
+    for dir in crate::paths::workbuddy_session_dirs() {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+                continue;
+            }
+            let Ok(text) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) else {
+                continue;
+            };
+            let session_id = value.get("sessionId").and_then(serde_json::Value::as_str);
+            let pid = value.get("pid").and_then(serde_json::Value::as_i64);
+            if let (Some(session_id), Some(pid)) = (session_id, pid) {
+                map.insert(session_id.to_string(), pid as i32);
+            }
         }
     }
     map

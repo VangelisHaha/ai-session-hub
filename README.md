@@ -8,7 +8,7 @@ Local session search, context recall, and cross-tool handoff across AI coding to
 
 ## Features
 
-- Search history across Claude Code, Codex, Kiro CLI, Kiro IDE, Kimi Code CLI, pi, Gemini CLI, and OpenCode.
+- Search history across Claude Code, Codex, Kiro CLI, Kiro IDE, Kimi Code CLI, pi, WorkBuddy, Gemini CLI, and OpenCode.
 - Filter by project directory, tool, time range, and role, with Chinese phrase search supported.
 - Read session transcripts, with a character budget and tool output stripped by default.
 - Produce deterministic digests: user intent, assistant takeaways, commands executed, file paths, and likely unfinished items.
@@ -26,6 +26,7 @@ Local session search, context recall, and cross-tool handoff across AI coding to
 | Kiro IDE | `<Kiro user dir>/globalStorage/kiro.kiroagent/workspace-sessions/<b64 workspace>/<sessionId>.json` | Full JSON parse |
 | Kimi Code CLI | `~/.kimi-code/sessions/wd_*/session_*/agents/*/wire.jsonl` plus `state.json` in the session dir | Incremental JSONL by byte offset |
 | pi | `~/.pi/agent/sessions/**/<time>_<uuid>.jsonl` | Incremental JSONL by byte offset |
+| WorkBuddy | `~/.workbuddy/projects/**/*.jsonl`, `~/.codebuddy/projects/**/*.jsonl` | Incremental JSONL by byte offset |
 | Gemini CLI | `~/.gemini/tmp/*/chats/session-*.json` | Full JSON parse |
 | OpenCode | `~/.local/share/opencode/opencode.db` | Full SQLite parse |
 
@@ -36,6 +37,8 @@ Two limitations come from the Kiro IDE files themselves, not from parsing: in ag
 Kimi Code CLI (the `kimi` command) stores a session as a directory rather than a file: metadata lives in `state.json` and the transcript in `agents/<agent>/wire.jsonl`. The wire stream repeats the same message across several event types, so only `agent.message.appended` is parsed — it is the one event covering user, assistant, and tool roles, whereas `context.append_message` carries user messages only and mixes in context injected for the model. Assistant `think` blocks are not indexed. Session IDs keep their `session_` prefix (e.g. `session_e1af002a-…`) and resume via `kimi -r <sessionId>`; because `kimi` takes no positional prompt, resuming with a first message uses `kimi -r <id> -p '<prompt>'`. The legacy `kimi-cli` layout is different and unsupported; point `ASH_KIMI_DIR` at a directory if yours lives elsewhere.
 
 pi (the `pi` CLI agent) uses the same shape as Claude Code — one directory per project, one append-only JSONL per session — but is simpler to read: the first line carries the real `cwd`, so the encoded directory name never has to be decoded. Assistant `thinking` blocks are skipped, and tool results keep only their text blocks so base64 images stay out of the index. An aborted turn persists `stopReason: aborted` with an empty message body; that is materialised as an `Operation aborted` marker so the session reads as interrupted. Resume is `pi --session <id>` and accepts a UUID prefix.
+
+WorkBuddy (Tencent CodeBuddy under an enterprise skin) shares Claude Code's layout, and two roots must be scanned: the desktop app writes `~/.workbuddy`, the standalone `codebuddy` / `cbc` CLI writes `~/.codebuddy`. Titles come from the `ai-title` event the model generates. Desktop user prompts are wrapped in a `<system-reminder>` block whose injected identity files can reach 14 KB, so only the `<user_query>` payload is indexed; CLI prompts have no wrapper and are taken as-is. `reasoning` and `file-history-snapshot` lines are skipped. Liveness comes from `<root>/sessions/<pid>.json`, a heartbeat file carrying both pid and sessionId — more reliable than command-line matching, since the session ID never appears in the command line. Resume is `codebuddy --resume <id>`; note the CLI ships inside `WorkBuddy.app` and is not on `PATH` by default, so symlink `WorkBuddy.app/Contents/Resources/app.asar.unpacked/cli/bin/codebuddy` if you want the generated commands to run as-is.
 
 Source files are read-only. The index and handoff packages are written to a separate data directory and never back into the sources above.
 
@@ -231,6 +234,7 @@ For testing, isolating the index, or pointing at custom AI tool locations:
 | `ASH_KIRO_IDE_DIR` | Override the Kiro IDE `workspace-sessions` directory |
 | `ASH_KIMI_DIR` | Override the Kimi Code CLI `sessions` directory |
 | `ASH_PI_DIR` | Override the pi `sessions` directory |
+| `ASH_WORKBUDDY_DIR` | Override the WorkBuddy `projects` directory; when set, only that directory is used |
 | `ASH_GEMINI_DIR` | Override the Gemini temp directory |
 | `ASH_OPENCODE_DB` | Override the OpenCode SQLite database path |
 | `ASH_INDEX_TOOL_RESULTS` | Set to `1` to add tool results to full-text search |
@@ -246,7 +250,7 @@ ash sync --full
 ## Design notes
 
 - Chinese search uses SQLite FTS5 `trigram`; queries shorter than 3 characters fall back to `LIKE`.
-- Claude, Codex, Kiro CLI, Kimi Code CLI, and pi are read incrementally by byte offset, consuming only complete newline-terminated JSONL lines.
+- Claude, Codex, Kiro CLI, Kimi Code CLI, pi, and WorkBuddy are read incrementally by byte offset, consuming only complete newline-terminated JSONL lines.
 - Kiro IDE, Gemini, and OpenCode are parsed in full, because their source files or database can be rewritten wholesale.
 - Session content is truncated uniformly: up to 24,000 characters for plain text, 600 for tool calls, and 1,200 for tool results.
 - Digests are rule-based extraction with no model calls. Consumers should still verify them; they are not an authoritative audit result.
@@ -286,7 +290,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 
 ## Trademarks and disclaimer
 
-This project is an independent third-party tool with no affiliation, sponsorship, or endorsement from Anthropic, OpenAI, Amazon, Google, Moonshot AI, OpenCode, or any other vendor. Claude, Claude Code, Codex, Kiro, Kimi, Kimi Code, pi, Gemini, OpenCode, and other names and marks belong to their respective owners and are used here only to describe the session sources this tool is compatible with.
+This project is an independent third-party tool with no affiliation, sponsorship, or endorsement from Anthropic, OpenAI, Amazon, Google, Moonshot AI, Tencent, OpenCode, or any other vendor. Claude, Claude Code, Codex, Kiro, Kimi, Kimi Code, pi, WorkBuddy, CodeBuddy, Gemini, OpenCode, and other names and marks belong to their respective owners and are used here only to describe the session sources this tool is compatible with.
 
 This project only reads session files that already exist locally on the machine running it. It does not modify, upload, or redistribute any third-party software's code or data. Users are responsible for confirming they have the rights to the data being read, and for complying with the terms of service of the AI tools involved as well as their organization's data governance rules.
 
