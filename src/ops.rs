@@ -432,6 +432,7 @@ fn normalize_tool(tool: Option<&str>) -> Result<Option<String>> {
         "kiro-cli" => "kiro",
         "kiroide" | "kiro_ide" | "kiro-agent" | "kiroagent" | "ide" => "kiro-ide",
         "kimi-cli" | "kimi-code" | "kimicode" | "kimi_code" => "kimi",
+        "pi-agent" | "piagent" | "pi_agent" | "pi-cli" => "pi",
         "gemini-cli" => "gemini",
         other => other,
     };

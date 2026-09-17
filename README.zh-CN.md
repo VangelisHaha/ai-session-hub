@@ -8,7 +8,7 @@
 
 ## 功能
 
-- 跨 Claude Code、Codex、Kiro CLI、Kiro IDE、Kimi Code CLI、Gemini CLI、OpenCode 检索历史会话。
+- 跨 Claude Code、Codex、Kiro CLI、Kiro IDE、Kimi Code CLI、pi、Gemini CLI、OpenCode 检索历史会话。
 - 按工程目录、工具、时间、角色过滤，并支持中文短语检索。
 - 读取会话正文，默认限制字符预算并剔除工具输出。
 - 生成确定性摘要：用户诉求、助手要点、执行命令、文件路径和可能未完成事项。
@@ -25,6 +25,7 @@
 | Kiro CLI | `~/.kiro/sessions/cli/*.jsonl` 及同名 `.json` | JSONL 字节偏移增量 |
 | Kiro IDE | `<Kiro 用户目录>/globalStorage/kiro.kiroagent/workspace-sessions/<工作区 base64>/<sessionId>.json` | JSON 全量解析 |
 | Kimi Code CLI | `~/.kimi-code/sessions/wd_*/session_*/agents/*/wire.jsonl` 及同目录 `state.json` | JSONL 字节偏移增量 |
+| pi | `~/.pi/agent/sessions/**/<时间>_<uuid>.jsonl` | JSONL 字节偏移增量 |
 | Gemini CLI | `~/.gemini/tmp/*/chats/session-*.json` | JSON 全量解析 |
 | OpenCode | `~/.local/share/opencode/opencode.db` | SQLite 全量解析 |
 
@@ -33,6 +34,8 @@ Kimi Code CLI（命令 `kimi`）的一个会话是一个目录而不是一个文
 Kiro IDE 的用户目录在 macOS 是 `~/Library/Application Support/Kiro/User`，Linux 是 `~/.config/Kiro/User`，两处都会尝试。IDE 会话的工具标识是 `kiro-ide`，与 Kiro CLI（`kiro`）相互独立：会话 ID 不通用，且 IDE 会话无法用命令行恢复。
 
 有两个限制来自 Kiro IDE 的存储本身，不是解析问题：agent 模式下助手回复常被写成 `On it.` 这类占位符，真实回复不落盘；消息级没有时间戳，全部回落到会话创建时间。用户提问、标题、工作区路径是完整的。
+
+pi（`pi` CLI agent）的布局与 Claude Code 同构——按工程目录分目录、每会话一个 append-only JSONL——但更好读：首行直接带真实 `cwd`，不用反解编码后的目录名。助手的 `thinking` 块不入索引，工具结果只取 text 块，避免把 base64 图片塞进全文索引。中断时 pi 会写 `stopReason: aborted` 且消息体为空，这里补一条 `Operation aborted` 标记，会话才能被判成「已被打断」。恢复命令是 `pi --session <id>`，支持 UUID 前缀。
 
 源文件只读。索引和交接包写入独立的数据目录，不会回写上述会话来源。
 
@@ -227,6 +230,7 @@ MCP 客户端一旦获得访问权限，就可以读取索引中允许返回的�
 | `ASH_KIRO_DIR` | 覆盖 Kiro CLI 会话目录 |
 | `ASH_KIRO_IDE_DIR` | 覆盖 Kiro IDE 的 `workspace-sessions` 目录 |
 | `ASH_KIMI_DIR` | 覆盖 Kimi Code CLI 的 `sessions` 目录 |
+| `ASH_PI_DIR` | 覆盖 pi 的 `sessions` 目录 |
 | `ASH_GEMINI_DIR` | 覆盖 Gemini 临时目录 |
 | `ASH_OPENCODE_DB` | 覆盖 OpenCode SQLite 数据库路径 |
 | `ASH_INDEX_TOOL_RESULTS` | 设为 `1` 后将工具结果加入全文检索 |
@@ -242,7 +246,7 @@ ash sync --full
 ## 设计说明
 
 - 中文检索使用 SQLite FTS5 `trigram`；少于 3 个字符的查询退化为 `LIKE`。
-- Claude、Codex、Kiro CLI、Kimi Code CLI 使用字节偏移增量读取，只消费以换行结尾的完整 JSONL 行。
+- Claude、Codex、Kiro CLI、Kimi Code CLI、pi 使用字节偏移增量读取，只消费以换行结尾的完整 JSONL 行。
 - Kiro IDE、Gemini 和 OpenCode 使用全量解析，因为其源文件或数据库可能整体更新。
 - 会话内容统一裁剪：普通文本最多 24,000 字符，工具调用最多 600 字符，工具结果最多 1,200 字符。
 - 摘要是规则化抽取，不调用模型；摘要结果仍应由使用方自行核实，不能当作事实审计结论。
@@ -282,7 +286,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 
 ## 商标与免责声明
 
-本项目是独立的第三方工具，与 Anthropic、OpenAI、Amazon、Google、Moonshot AI、OpenCode 及其他任何厂商均无隶属、赞助或背书关系。Claude、Claude Code、Codex、Kiro、Kimi、Kimi Code、Gemini、OpenCode 等名称与标识归各自权利人所有，本文中仅用于说明本工具所兼容的会话来源。
+本项目是独立的第三方工具，与 Anthropic、OpenAI、Amazon、Google、Moonshot AI、OpenCode 及其他任何厂商均无隶属、赞助或背书关系。Claude、Claude Code、Codex、Kiro、Kimi、Kimi Code、pi、Gemini、OpenCode 等名称与标识归各自权利人所有，本文中仅用于说明本工具所兼容的会话来源。
 
 本项目只读取运行它的机器上本地已有的会话文件，不修改、不上传、不再分发任何第三方软件的代码或数据。使用者需自行确认对所读取数据拥有相应权限，并遵守所用 AI 工具的服务条款以及所在组织的数据管理规定。
 

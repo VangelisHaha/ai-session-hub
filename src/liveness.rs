@@ -135,10 +135,11 @@ pub struct LivenessProbe {
     now_ms: i64,
 }
 
-/// 中断标记：Kiro / Claude 打断时会把这句写进会话
-const INTERRUPT_MARKS: [&str; 4] = [
+/// 中断标记：Kiro / Claude 打断时会把这句写进会话，pi 则写 stopReason=aborted + errorMessage
+const INTERRUPT_MARKS: [&str; 5] = [
     "Response was interrupted",
     "[Request interrupted",
+    "Operation aborted",
     "用户打断",
     "已被用户中断",
 ];

@@ -70,6 +70,14 @@ pub fn kimi_sessions_dir() -> PathBuf {
     home_dir().join(".kimi-code/sessions")
 }
 
+/// pi（`pi` CLI agent）的会话目录：`~/.pi/agent/sessions/<编码后的 cwd>/<时间>_<uuid>.jsonl`
+pub fn pi_sessions_dir() -> PathBuf {
+    if let Some(dir) = std::env::var_os("ASH_PI_DIR") {
+        return PathBuf::from(dir);
+    }
+    home_dir().join(".pi/agent/sessions")
+}
+
 pub fn gemini_tmp_dir() -> PathBuf {
     if let Some(dir) = std::env::var_os("ASH_GEMINI_DIR") {
         return PathBuf::from(dir);
