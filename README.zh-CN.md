@@ -38,7 +38,7 @@ Kiro IDE 的用户目录在 macOS 是 `~/Library/Application Support/Kiro/User`�
 
 pi（`pi` CLI agent）的布局与 Claude Code 同构——按工程目录分目录、每会话一个 append-only JSONL——但更好读：首行直接带真实 `cwd`，不用反解编码后的目录名。助手的 `thinking` 块不入索引，工具结果只取 text 块，避免把 base64 图片塞进全文索引。中断时 pi 会写 `stopReason: aborted` 且消息体为空，这里补一条 `Operation aborted` 标记，会话才能被判成「已被打断」。恢复命令是 `pi --session <id>`，支持 UUID 前缀。
 
-WorkBuddy（腾讯 CodeBuddy 的企业换皮）与 Claude Code 布局同构，需要扫两个根目录：桌面应用写 `~/.workbuddy`，独立的 `codebuddy` / `cbc` CLI 写 `~/.codebuddy`。标题取模型生成的 `ai-title` 事件。桌面端的用户提问整条被 `<system-reminder>` 包住，注入的 identity 文件动辄 14KB，因此只索引其中 `<user_query>` 的内容；CLI 端没有这层包裹，原样取用。`reasoning` 与 `file-history-snapshot` 行不入索引。活跃度来自 `<root>/sessions/<pid>.json` 心跳文件，里面同时有 pid 和 sessionId，比命令行匹配更可靠——WorkBuddy 的会话 ID 从不出现在命令行里。恢复命令是 `codebuddy --resume <id>`；注意该 CLI 装在 `WorkBuddy.app` 内部、默认不在 `PATH` 上，想让生成的命令直接可用需要自行软链 `WorkBuddy.app/Contents/Resources/app.asar.unpacked/cli/bin/codebuddy`。
+WorkBuddy（腾讯 CodeBuddy 的企业换皮）与 Claude Code 布局同构，需要扫两个根目录：桌面应用写 `~/.workbuddy`，独立的 `codebuddy` / `cbc` CLI 写 `~/.codebuddy`。标题取模型生成的 `ai-title` 事件。桌面端的用户提问整条被 `<system-reminder>` 包住，注入的 identity 文件动辄 14KB，因此只索引其中 `<user_query>` 的内容；CLI 端没有这层包裹，原样取用。`reasoning` 与 `file-history-snapshot` 行不入索引。活跃度来自 `<root>/sessions/<pid>.json` 心跳文件，里面同时有 pid 和 sessionId，比命令行匹配更可靠——WorkBuddy 的会话 ID 从不出现在命令行里。恢复命令是 `codebuddy --resume <id>`。该 CLI 装在 `WorkBuddy.app` 内部、默认不在 `PATH` 上，生成命令时会自动回落到它的绝对路径，见下方「可执行文件定位」。
 
 源文件只读。索引和交接包写入独立的数据目录，不会回写上述会话来源。
 
@@ -237,6 +237,7 @@ MCP 客户端一旦获得访问权限，就可以读取索引中允许返回的�
 | `ASH_WORKBUDDY_DIR` | 覆盖 WorkBuddy 的 `projects` 目录；设置后只使用该目录 |
 | `ASH_GEMINI_DIR` | 覆盖 Gemini 临时目录 |
 | `ASH_OPENCODE_DB` | 覆盖 OpenCode SQLite 数据库路径 |
+| `ASH_<TOOL>_BIN` | 覆盖生成命令时使用的可执行文件，如 `ASH_WORKBUDDY_BIN`、`ASH_KIMI_BIN`、`ASH_KIRO_IDE_BIN` |
 | `ASH_INDEX_TOOL_RESULTS` | 设为 `1` 后将工具结果加入全文检索 |
 
 建议测试时使用独立的数据目录和会话目录，避免读到真实会话、也避免污染正式索引。本仓库不附带任何会话样例，下面的会话目录需要你自己准备：
@@ -255,6 +256,7 @@ ash sync --full
 - 会话内容统一裁剪：普通文本最多 24,000 字符，工具调用最多 600 字符，工具结果最多 1,200 字符。
 - 摘要是规则化抽取，不调用模型；摘要结果仍应由使用方自行核实，不能当作事实审计结论。
 - 跨工具交接不伪造目标工具的原生会话格式，而是生成显式 Markdown 交接包并返回启动命令。
+- 可执行文件定位：生成的 `resume` / `handoff` 命令是拿来直接执行的，但有些 CLI 默认不在 `PATH` 上（Kimi Code 在 `~/.kimi-code/bin`，WorkBuddy 的 `codebuddy` 埋在 app 包里）。解析顺序是 `ASH_<TOOL>_BIN` 覆盖 → PATH 命中（保持裸名字）→ 已知安装位置（用绝对路径）→ 都没有则仍返回裸名字，让人看到该装什么。
 
 ## 开源与安全边界
 

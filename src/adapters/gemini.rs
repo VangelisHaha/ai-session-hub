@@ -133,6 +133,6 @@ impl Adapter for GeminiAdapter {
     }
 }
 
-pub fn resume_command(session_id: &str) -> String {
-    format!("gemini --resume {session_id}")
+pub fn resume_command(bin: &str, session_id: &str) -> String {
+    format!("{bin} --resume {session_id}")
 }

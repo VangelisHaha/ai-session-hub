@@ -263,8 +263,8 @@ fn strip_wrapper(text: &str) -> String {
     }
 }
 
-pub fn resume_command(session_id: &str) -> String {
-    format!("kiro-cli chat --resume-id {session_id}")
+pub fn resume_command(bin: &str, session_id: &str) -> String {
+    format!("{bin} chat --resume-id {session_id}")
 }
 
 #[cfg(test)]

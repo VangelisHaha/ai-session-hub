@@ -225,9 +225,9 @@ fn strip_system_reminder(raw: &str) -> String {
     out.trim().to_string()
 }
 
-/// WorkBuddy 的 CLI 没有进 PATH，装在 app 包里，名字仍是 codebuddy / cbc
-pub fn resume_command(session_id: &str) -> String {
-    format!("codebuddy --resume {session_id}")
+/// WorkBuddy 的 CLI 默认不在 PATH 上（装在 app 包里），bin 由 launcher 解析后传入
+pub fn resume_command(bin: &str, session_id: &str) -> String {
+    format!("{bin} --resume {session_id}")
 }
 
 #[cfg(test)]

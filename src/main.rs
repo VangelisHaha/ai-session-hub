@@ -8,6 +8,7 @@ mod adapters;
 mod digest;
 mod handoff;
 mod index;
+mod launcher;
 mod liveness;
 mod mcp;
 mod model;

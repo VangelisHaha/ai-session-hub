@@ -206,8 +206,8 @@ fn text_blocks(content: &Value) -> String {
         .join("\n")
 }
 
-pub fn resume_command(session_id: &str) -> String {
-    format!("kimi -r {session_id}")
+pub fn resume_command(bin: &str, session_id: &str) -> String {
+    format!("{bin} -r {session_id}")
 }
 
 #[cfg(test)]

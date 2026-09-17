@@ -174,8 +174,8 @@ fn text_blocks(content: &Value) -> String {
         .join("\n")
 }
 
-pub fn resume_command(session_id: &str) -> String {
-    format!("pi --session {session_id}")
+pub fn resume_command(bin: &str, session_id: &str) -> String {
+    format!("{bin} --session {session_id}")
 }
 
 #[cfg(test)]

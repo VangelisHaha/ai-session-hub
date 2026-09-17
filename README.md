@@ -38,7 +38,7 @@ Kimi Code CLI (the `kimi` command) stores a session as a directory rather than a
 
 pi (the `pi` CLI agent) uses the same shape as Claude Code — one directory per project, one append-only JSONL per session — but is simpler to read: the first line carries the real `cwd`, so the encoded directory name never has to be decoded. Assistant `thinking` blocks are skipped, and tool results keep only their text blocks so base64 images stay out of the index. An aborted turn persists `stopReason: aborted` with an empty message body; that is materialised as an `Operation aborted` marker so the session reads as interrupted. Resume is `pi --session <id>` and accepts a UUID prefix.
 
-WorkBuddy (Tencent CodeBuddy under an enterprise skin) shares Claude Code's layout, and two roots must be scanned: the desktop app writes `~/.workbuddy`, the standalone `codebuddy` / `cbc` CLI writes `~/.codebuddy`. Titles come from the `ai-title` event the model generates. Desktop user prompts are wrapped in a `<system-reminder>` block whose injected identity files can reach 14 KB, so only the `<user_query>` payload is indexed; CLI prompts have no wrapper and are taken as-is. `reasoning` and `file-history-snapshot` lines are skipped. Liveness comes from `<root>/sessions/<pid>.json`, a heartbeat file carrying both pid and sessionId — more reliable than command-line matching, since the session ID never appears in the command line. Resume is `codebuddy --resume <id>`; note the CLI ships inside `WorkBuddy.app` and is not on `PATH` by default, so symlink `WorkBuddy.app/Contents/Resources/app.asar.unpacked/cli/bin/codebuddy` if you want the generated commands to run as-is.
+WorkBuddy (Tencent CodeBuddy under an enterprise skin) shares Claude Code's layout, and two roots must be scanned: the desktop app writes `~/.workbuddy`, the standalone `codebuddy` / `cbc` CLI writes `~/.codebuddy`. Titles come from the `ai-title` event the model generates. Desktop user prompts are wrapped in a `<system-reminder>` block whose injected identity files can reach 14 KB, so only the `<user_query>` payload is indexed; CLI prompts have no wrapper and are taken as-is. `reasoning` and `file-history-snapshot` lines are skipped. Liveness comes from `<root>/sessions/<pid>.json`, a heartbeat file carrying both pid and sessionId — more reliable than command-line matching, since the session ID never appears in the command line. Resume is `codebuddy --resume <id>`. The CLI ships inside `WorkBuddy.app` and is not on `PATH` by default, so generated commands fall back to its absolute path — see "Launcher resolution" below.
 
 Source files are read-only. The index and handoff packages are written to a separate data directory and never back into the sources above.
 
@@ -237,6 +237,7 @@ For testing, isolating the index, or pointing at custom AI tool locations:
 | `ASH_WORKBUDDY_DIR` | Override the WorkBuddy `projects` directory; when set, only that directory is used |
 | `ASH_GEMINI_DIR` | Override the Gemini temp directory |
 | `ASH_OPENCODE_DB` | Override the OpenCode SQLite database path |
+| `ASH_<TOOL>_BIN` | Override the executable used in generated commands, e.g. `ASH_WORKBUDDY_BIN`, `ASH_KIMI_BIN`, `ASH_KIRO_IDE_BIN` |
 | `ASH_INDEX_TOOL_RESULTS` | Set to `1` to add tool results to full-text search |
 
 When testing, use a dedicated data directory and session directories to avoid reading real sessions and to avoid polluting your primary index. This repository ships no session samples, so you need to prepare the session directories below yourself:
@@ -255,6 +256,7 @@ ash sync --full
 - Session content is truncated uniformly: up to 24,000 characters for plain text, 600 for tool calls, and 1,200 for tool results.
 - Digests are rule-based extraction with no model calls. Consumers should still verify them; they are not an authoritative audit result.
 - Cross-tool handoff does not fabricate the target tool's native session format. It produces an explicit Markdown handoff package and returns the launch command.
+- Launcher resolution: generated `resume` / `handoff` commands are meant to be executed as-is, but some CLIs are not on `PATH` (Kimi Code lives in `~/.kimi-code/bin`, WorkBuddy's `codebuddy` is buried in the app bundle). The executable is resolved as `ASH_<TOOL>_BIN` override → found on `PATH` (keep the bare name) → known install location (use the absolute path) → otherwise the bare name, so the output still shows what to install.
 
 ## Open source and security boundary
 

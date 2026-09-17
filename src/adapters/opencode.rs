@@ -212,6 +212,6 @@ fn normalize_millis(value: i64) -> i64 {
     }
 }
 
-pub fn resume_command(session_id: &str) -> String {
-    format!("opencode -s {session_id}")
+pub fn resume_command(bin: &str, session_id: &str) -> String {
+    format!("{bin} -s {session_id}")
 }

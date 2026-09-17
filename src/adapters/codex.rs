@@ -192,6 +192,6 @@ fn is_noise(text: &str) -> bool {
         .any(|prefix| trimmed.starts_with(prefix))
 }
 
-pub fn resume_command(session_id: &str) -> String {
-    format!("codex resume {session_id}")
+pub fn resume_command(bin: &str, session_id: &str) -> String {
+    format!("{bin} resume {session_id}")
 }
