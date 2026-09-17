@@ -36,7 +36,7 @@ const USAGE: &str = r#"ai-session-hub (ash) — 跨 AI 工具会话检索与交�
   ash stats                              索引概况
 
 通用选项：
-  --tool <claude|codex|kiro|kiro-ide|gemini|opencode>
+  --tool <claude|codex|kiro|kiro-ide|kimi|gemini|opencode>
   --cwd <路径片段>      --since <7d|36h|2026-07-30>   --until <同上>
   --role <user|assistant|tool>            --limit <N>
   --tail <N>            --from-seq <N>    --budget <字符数>

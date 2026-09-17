@@ -8,7 +8,7 @@ Local session search, context recall, and cross-tool handoff across AI coding to
 
 ## Features
 
-- Search history across Claude Code, Codex, Kiro CLI, Kiro IDE, Gemini CLI, and OpenCode.
+- Search history across Claude Code, Codex, Kiro CLI, Kiro IDE, Kimi Code CLI, Gemini CLI, and OpenCode.
 - Filter by project directory, tool, time range, and role, with Chinese phrase search supported.
 - Read session transcripts, with a character budget and tool output stripped by default.
 - Produce deterministic digests: user intent, assistant takeaways, commands executed, file paths, and likely unfinished items.
@@ -24,12 +24,15 @@ Local session search, context recall, and cross-tool handoff across AI coding to
 | Codex | `~/.codex/sessions/**/*.jsonl`, `~/.codex/archived_sessions/**/*.jsonl` | Incremental JSONL by byte offset |
 | Kiro CLI | `~/.kiro/sessions/cli/*.jsonl` plus same-named `.json` | Incremental JSONL by byte offset |
 | Kiro IDE | `<Kiro user dir>/globalStorage/kiro.kiroagent/workspace-sessions/<b64 workspace>/<sessionId>.json` | Full JSON parse |
+| Kimi Code CLI | `~/.kimi-code/sessions/wd_*/session_*/agents/*/wire.jsonl` plus `state.json` in the session dir | Incremental JSONL by byte offset |
 | Gemini CLI | `~/.gemini/tmp/*/chats/session-*.json` | Full JSON parse |
 | OpenCode | `~/.local/share/opencode/opencode.db` | Full SQLite parse |
 
 The Kiro IDE user directory is `~/Library/Application Support/Kiro/User` on macOS and `~/.config/Kiro/User` on Linux; both are probed. Kiro IDE sessions use the tool id `kiro-ide` and are separate from Kiro CLI (`kiro`): the session IDs are not interchangeable and IDE sessions cannot be resumed from the command line.
 
 Two limitations come from the Kiro IDE files themselves, not from parsing: in agent mode the assistant reply is often persisted as a placeholder such as `On it.` rather than the real answer, and messages carry no individual timestamps, so everything falls back to the session's creation time. User prompts, titles, and workspace paths are complete.
+
+Kimi Code CLI (the `kimi` command) stores a session as a directory rather than a file: metadata lives in `state.json` and the transcript in `agents/<agent>/wire.jsonl`. The wire stream repeats the same message across several event types, so only `agent.message.appended` is parsed — it is the one event covering user, assistant, and tool roles, whereas `context.append_message` carries user messages only and mixes in context injected for the model. Assistant `think` blocks are not indexed. Session IDs keep their `session_` prefix (e.g. `session_e1af002a-…`) and resume via `kimi -r <sessionId>`; because `kimi` takes no positional prompt, resuming with a first message uses `kimi -r <id> -p '<prompt>'`. The legacy `kimi-cli` layout is different and unsupported; point `ASH_KIMI_DIR` at a directory if yours lives elsewhere.
 
 Source files are read-only. The index and handoff packages are written to a separate data directory and never back into the sources above.
 
@@ -141,6 +144,23 @@ command = "/absolute/path/to/ash"
 args = ["mcp"]
 ```
 
+### Kimi Code CLI
+
+Add to `~/.kimi-code/mcp.json` (project scope: `<cwd>/.kimi-code/mcp.json`):
+
+```json
+{
+  "mcpServers": {
+    "ai-session-hub": {
+      "command": "/absolute/path/to/ash",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+MCP servers are loaded at session start, so start a new session (`/new`) or restart `kimi` afterwards.
+
 ### Any other MCP client
 
 Most clients accept this shape in their `mcp.json`:
@@ -206,6 +226,7 @@ For testing, isolating the index, or pointing at custom AI tool locations:
 | `ASH_CODEX_DIR` | Override the Codex session directory; when set, only that directory is used |
 | `ASH_KIRO_DIR` | Override the Kiro CLI session directory |
 | `ASH_KIRO_IDE_DIR` | Override the Kiro IDE `workspace-sessions` directory |
+| `ASH_KIMI_DIR` | Override the Kimi Code CLI `sessions` directory |
 | `ASH_GEMINI_DIR` | Override the Gemini temp directory |
 | `ASH_OPENCODE_DB` | Override the OpenCode SQLite database path |
 | `ASH_INDEX_TOOL_RESULTS` | Set to `1` to add tool results to full-text search |
@@ -221,7 +242,7 @@ ash sync --full
 ## Design notes
 
 - Chinese search uses SQLite FTS5 `trigram`; queries shorter than 3 characters fall back to `LIKE`.
-- Claude, Codex, and Kiro CLI are read incrementally by byte offset, consuming only complete newline-terminated JSONL lines.
+- Claude, Codex, Kiro CLI, and Kimi Code CLI are read incrementally by byte offset, consuming only complete newline-terminated JSONL lines.
 - Kiro IDE, Gemini, and OpenCode are parsed in full, because their source files or database can be rewritten wholesale.
 - Session content is truncated uniformly: up to 24,000 characters for plain text, 600 for tool calls, and 1,200 for tool results.
 - Digests are rule-based extraction with no model calls. Consumers should still verify them; they are not an authoritative audit result.
@@ -261,7 +282,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 
 ## Trademarks and disclaimer
 
-This project is an independent third-party tool with no affiliation, sponsorship, or endorsement from Anthropic, OpenAI, Amazon, Google, OpenCode, or any other vendor. Claude, Claude Code, Codex, Kiro, Gemini, OpenCode, and other names and marks belong to their respective owners and are used here only to describe the session sources this tool is compatible with.
+This project is an independent third-party tool with no affiliation, sponsorship, or endorsement from Anthropic, OpenAI, Amazon, Google, Moonshot AI, OpenCode, or any other vendor. Claude, Claude Code, Codex, Kiro, Kimi, Kimi Code, Gemini, OpenCode, and other names and marks belong to their respective owners and are used here only to describe the session sources this tool is compatible with.
 
 This project only reads session files that already exist locally on the machine running it. It does not modify, upload, or redistribute any third-party software's code or data. Users are responsible for confirming they have the rights to the data being read, and for complying with the terms of service of the AI tools involved as well as their organization's data governance rules.
 

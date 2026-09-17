@@ -409,14 +409,14 @@ fn read_kiro_locks() -> HashMap<String, i32> {
     map
 }
 
-/// 从命令行提取会话 ID：`--resume-id X` / `--resume X` / `resume X` / `-s X`
+/// 从命令行提取会话 ID：`--resume-id X` / `--resume X` / `resume X` / `-s X` / `-r X`（kimi）
 pub fn extract_session_ids(command: &str) -> Vec<String> {
     let tokens: Vec<&str> = command.split_whitespace().collect();
     let mut ids = Vec::new();
     for (index, token) in tokens.iter().enumerate() {
         let is_flag = matches!(
             *token,
-            "--resume-id" | "--resume" | "resume" | "-s" | "--session"
+            "--resume-id" | "--resume" | "resume" | "-s" | "--session" | "-r" | "-S"
         );
         if !is_flag {
             continue;

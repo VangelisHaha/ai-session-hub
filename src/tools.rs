@@ -4,10 +4,11 @@
 //! **跨工具**无法迁移原生会话（历史格式、tool_use id、模型都不通），
 //! 所以统一走「新会话 + 交接包」：把交接文件路径塞进第一条 prompt。
 
-use crate::adapters::{claude, codex, gemini, kiro, kiro_ide, opencode};
+use crate::adapters::{claude, codex, gemini, kimi, kiro, kiro_ide, opencode};
 
-pub const SUPPORTED_TOOLS: [&str; 6] =
-    ["claude", "codex", "kiro", "kiro-ide", "gemini", "opencode"];
+pub const SUPPORTED_TOOLS: [&str; 7] = [
+    "claude", "codex", "kiro", "kiro-ide", "kimi", "gemini", "opencode",
+];
 
 pub fn resume_command(tool: &str, session_id: &str) -> String {
     match tool {
@@ -15,6 +16,7 @@ pub fn resume_command(tool: &str, session_id: &str) -> String {
         "codex" => codex::resume_command(session_id),
         "kiro" => kiro::resume_command(session_id),
         "kiro-ide" => kiro_ide::resume_command(session_id),
+        "kimi" => kimi::resume_command(session_id),
         "gemini" => gemini::resume_command(session_id),
         "opencode" => opencode::resume_command(session_id),
         other => format!("# 未知工具 {other}，无法生成恢复命令"),
@@ -30,6 +32,8 @@ pub fn resume_with_prompt(tool: &str, session_id: &str, prompt: &str) -> String 
         "kiro" => format!("kiro-cli chat --resume-id {session_id} {quoted}"),
         // IDE 会话没有命令行 resume，退化成「交接给 Kiro CLI」
         "kiro-ide" => format!("kiro-cli chat {quoted}"),
+        // kimi 不接受位置参数形式的 prompt，只能走 -p 一次性模式
+        "kimi" => format!("kimi -r {session_id} -p {quoted}"),
         "gemini" => format!("gemini --resume {session_id} {quoted}"),
         "opencode" => format!("opencode run -s {session_id} {quoted}"),
         other => format!("# 未知工具 {other}"),
@@ -50,6 +54,7 @@ pub fn handoff_command(tool: &str, brief_path: &str, note: &str) -> String {
             )
         }
         "gemini" => format!("gemini {quoted}"),
+        "kimi" => format!("kimi -p {quoted}"),
         "opencode" => format!("opencode run {quoted}"),
         other => format!("# 未知工具 {other}"),
     }
@@ -72,6 +77,19 @@ mod tests {
             resume_command("kiro", "id1"),
             "kiro-cli chat --resume-id id1"
         );
+        assert_eq!(resume_command("kimi", "session_id1"), "kimi -r session_id1");
+    }
+
+    #[test]
+    fn kimi_prompts_go_through_the_p_flag() {
+        assert_eq!(
+            resume_with_prompt("kimi", "session_id1", "继续"),
+            "kimi -r session_id1 -p '继续'"
+        );
+        assert_eq!(handoff_command("kimi", "/tmp/b.md", "收尾"), {
+            let prompt = shell_quote("先读 /tmp/b.md 了解上下文，然后继续：收尾");
+            format!("kimi -p {prompt}")
+        });
     }
 
     #[test]

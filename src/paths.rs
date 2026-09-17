@@ -61,6 +61,15 @@ pub fn kiro_ide_session_dirs() -> Vec<PathBuf> {
     ]
 }
 
+/// Kimi Code CLI（`kimi`）的会话根目录：
+/// `~/.kimi-code/sessions/wd_<名字>_<hash>/session_<uuid>/agents/<agent>/wire.jsonl`
+pub fn kimi_sessions_dir() -> PathBuf {
+    if let Some(dir) = std::env::var_os("ASH_KIMI_DIR") {
+        return PathBuf::from(dir);
+    }
+    home_dir().join(".kimi-code/sessions")
+}
+
 pub fn gemini_tmp_dir() -> PathBuf {
     if let Some(dir) = std::env::var_os("ASH_GEMINI_DIR") {
         return PathBuf::from(dir);

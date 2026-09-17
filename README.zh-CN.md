@@ -8,7 +8,7 @@
 
 ## 功能
 
-- 跨 Claude Code、Codex、Kiro CLI、Kiro IDE、Gemini CLI、OpenCode 检索历史会话。
+- 跨 Claude Code、Codex、Kiro CLI、Kiro IDE、Kimi Code CLI、Gemini CLI、OpenCode 检索历史会话。
 - 按工程目录、工具、时间、角色过滤，并支持中文短语检索。
 - 读取会话正文，默认限制字符预算并剔除工具输出。
 - 生成确定性摘要：用户诉求、助手要点、执行命令、文件路径和可能未完成事项。
@@ -24,8 +24,11 @@
 | Codex | `~/.codex/sessions/**/*.jsonl`、`~/.codex/archived_sessions/**/*.jsonl` | JSONL 字节偏移增量 |
 | Kiro CLI | `~/.kiro/sessions/cli/*.jsonl` 及同名 `.json` | JSONL 字节偏移增量 |
 | Kiro IDE | `<Kiro 用户目录>/globalStorage/kiro.kiroagent/workspace-sessions/<工作区 base64>/<sessionId>.json` | JSON 全量解析 |
+| Kimi Code CLI | `~/.kimi-code/sessions/wd_*/session_*/agents/*/wire.jsonl` 及同目录 `state.json` | JSONL 字节偏移增量 |
 | Gemini CLI | `~/.gemini/tmp/*/chats/session-*.json` | JSON 全量解析 |
 | OpenCode | `~/.local/share/opencode/opencode.db` | SQLite 全量解析 |
+
+Kimi Code CLI（命令 `kimi`）的一个会话是一个目录而不是一个文件：元信息在 `state.json`，正文在 `agents/<agent>/wire.jsonl`。wire 流里同一条消息会以多种事件重复出现，这里只认 `agent.message.appended`——它是唯一同时覆盖 user / assistant / tool 三种角色的事件；`context.append_message` 只有 user，还混入了注入给模型的上下文。助手的 `think` 思考块不入索引。会话 ID 自带 `session_` 前缀（如 `session_e1af002a-…`），恢复命令是 `kimi -r <sessionId>`；`kimi` 不接受位置参数形式的提示词，带首句续聊时会走 `kimi -r <id> -p '<提示词>'`。旧版 `kimi-cli` 的目录结构不同，未做支持，需要时用 `ASH_KIMI_DIR` 指向实际目录。
 
 Kiro IDE 的用户目录在 macOS 是 `~/Library/Application Support/Kiro/User`，Linux 是 `~/.config/Kiro/User`，两处都会尝试。IDE 会话的工具标识是 `kiro-ide`，与 Kiro CLI（`kiro`）相互独立：会话 ID 不通用，且 IDE 会话无法用命令行恢复。
 
@@ -141,6 +144,23 @@ command = "/absolute/path/to/ash"
 args = ["mcp"]
 ```
 
+### Kimi Code CLI
+
+写入 `~/.kimi-code/mcp.json`（项目级为 `<cwd>/.kimi-code/mcp.json`）：
+
+```json
+{
+  "mcpServers": {
+    "ai-session-hub": {
+      "command": "/absolute/path/to/ash",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+MCP 服务在会话启动时加载，改完后新建会话（`/new`）或重启 `kimi` 才生效。
+
 ### 其他 MCP 客户端
 
 大多数客户端的 `mcp.json` 都接受这种写法：
@@ -206,6 +226,7 @@ MCP 客户端一旦获得访问权限，就可以读取索引中允许返回的�
 | `ASH_CODEX_DIR` | 覆盖 Codex 会话目录；设置后只使用该目录 |
 | `ASH_KIRO_DIR` | 覆盖 Kiro CLI 会话目录 |
 | `ASH_KIRO_IDE_DIR` | 覆盖 Kiro IDE 的 `workspace-sessions` 目录 |
+| `ASH_KIMI_DIR` | 覆盖 Kimi Code CLI 的 `sessions` 目录 |
 | `ASH_GEMINI_DIR` | 覆盖 Gemini 临时目录 |
 | `ASH_OPENCODE_DB` | 覆盖 OpenCode SQLite 数据库路径 |
 | `ASH_INDEX_TOOL_RESULTS` | 设为 `1` 后将工具结果加入全文检索 |
@@ -221,7 +242,7 @@ ash sync --full
 ## 设计说明
 
 - 中文检索使用 SQLite FTS5 `trigram`；少于 3 个字符的查询退化为 `LIKE`。
-- Claude、Codex、Kiro CLI 使用字节偏移增量读取，只消费以换行结尾的完整 JSONL 行。
+- Claude、Codex、Kiro CLI、Kimi Code CLI 使用字节偏移增量读取，只消费以换行结尾的完整 JSONL 行。
 - Kiro IDE、Gemini 和 OpenCode 使用全量解析，因为其源文件或数据库可能整体更新。
 - 会话内容统一裁剪：普通文本最多 24,000 字符，工具调用最多 600 字符，工具结果最多 1,200 字符。
 - 摘要是规则化抽取，不调用模型；摘要结果仍应由使用方自行核实，不能当作事实审计结论。
@@ -261,7 +282,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 
 ## 商标与免责声明
 
-本项目是独立的第三方工具，与 Anthropic、OpenAI、Amazon、Google、OpenCode 及其他任何厂商均无隶属、赞助或背书关系。Claude、Claude Code、Codex、Kiro、Gemini、OpenCode 等名称与标识归各自权利人所有，本文中仅用于说明本工具所兼容的会话来源。
+本项目是独立的第三方工具，与 Anthropic、OpenAI、Amazon、Google、Moonshot AI、OpenCode 及其他任何厂商均无隶属、赞助或背书关系。Claude、Claude Code、Codex、Kiro、Kimi、Kimi Code、Gemini、OpenCode 等名称与标识归各自权利人所有，本文中仅用于说明本工具所兼容的会话来源。
 
 本项目只读取运行它的机器上本地已有的会话文件，不修改、不上传、不再分发任何第三方软件的代码或数据。使用者需自行确认对所读取数据拥有相应权限，并遵守所用 AI 工具的服务条款以及所在组织的数据管理规定。
 

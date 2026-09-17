@@ -151,7 +151,9 @@ fn render_brief(
 }
 
 fn short_id(session_id: &str) -> String {
-    session_id.chars().take(8).collect()
+    // Kimi 的会话 ID 形如 `session_<uuid>`，直接截前 8 位只会得到 "session_"
+    let meaningful = session_id.strip_prefix("session_").unwrap_or(session_id);
+    meaningful.chars().take(8).collect()
 }
 
 #[cfg(test)]
@@ -161,6 +163,7 @@ mod tests {
     #[test]
     fn short_id_is_stable() {
         assert_eq!(short_id("b2daab07-0161-4897"), "b2daab07");
+        assert_eq!(short_id("session_e1af002a-a4d1-4a7d"), "e1af002a");
     }
 
     #[test]
