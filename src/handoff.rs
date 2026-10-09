@@ -15,6 +15,8 @@ pub const DEFAULT_BUDGET_CHARS: usize = 16_000;
 
 #[derive(Debug, Serialize)]
 pub struct HandoffResult {
+    pub is_nikou: bool,
+    pub nikou_origin: Option<crate::nikou::NikouOrigin>,
     pub uid: String,
     pub from_tool: String,
     pub to_tool: String,
@@ -99,6 +101,8 @@ pub fn create(
     };
 
     Ok(HandoffResult {
+        is_nikou: session.is_nikou,
+        nikou_origin: session.nikou_origin.clone(),
         uid: session.uid,
         from_tool: session.tool,
         to_tool: to_tool.to_string(),
@@ -169,6 +173,8 @@ mod tests {
     #[test]
     fn brief_contains_digest_and_raw_tail() {
         let session = SessionRow {
+            is_nikou: false,
+            nikou_origin: None,
             uid: "kiro:s1".into(),
             tool: "kiro".into(),
             session_id: "s1".into(),
@@ -193,5 +199,38 @@ mod tests {
         assert!(brief.contains("会话交接包"));
         assert!(brief.contains("接手后的目标"));
         assert!(brief.contains("### [3] 用户"));
+    }
+    #[test]
+    fn nikou_route_is_kept_even_when_first_message_is_outside_tail() {
+        let origin = crate::nikou::parse(&crate::nikou::tests::marker("om_first")).unwrap();
+        let session = SessionRow {
+            is_nikou: true,
+            nikou_origin: Some(origin),
+            uid: "codex:bot".into(),
+            tool: "codex".into(),
+            session_id: "bot".into(),
+            title: None,
+            cwd: None,
+            created_at: None,
+            updated_at: None,
+            source_path: None,
+            message_count: 100,
+            resume_command: None,
+        };
+        let tail = vec![MessageRow {
+            seq: 99,
+            role: "assistant".into(),
+            kind: "text".into(),
+            tool_name: None,
+            ts: None,
+            content: "已完成".into(),
+        }];
+        let digest = crate::digest::build(&session, &tail);
+        let brief = render_brief(&session, &digest, &tail, "接管并核对话题");
+        assert!(brief.contains("feishu_bot"));
+        assert!(brief.contains("oc_demo"));
+        assert!(brief.contains("--thread 'omt_demo'"));
+        assert!(brief.contains("--message-id 'om_first'"));
+        assert!(!brief.contains(crate::nikou::BEGIN));
     }
 }

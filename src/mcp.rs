@@ -182,6 +182,7 @@ fn tool_definitions() -> Vec<Value> {
                     "role": { "type": "string", "enum": ["user", "assistant", "tool"] },
                     "include_tool_results": { "type": "boolean", "description": "是否检索工具输出（默认 false，体积大噪声高）" },
                     "limit": { "type": "integer", "description": "返回条数上限，默认 20" },
+                    "nikou_only": { "type": "boolean", "description": "仅查询首条真实用户输入带有效妮蔻来源块的飞书会话；返回 nikou_origin 路由信息" },
                     "max_per_session": { "type": "integer", "description": "同一会话最多返回几条命中，默认 3" }
                 },
                 "required": ["query"]
@@ -189,7 +190,7 @@ fn tool_definitions() -> Vec<Value> {
         }),
         json!({
             "name": "session_list",
-            "description": "List / browse past AI sessions by tool, project directory, title, state or time range. USE THIS for \"what was I working on yesterday\", \"list my recent sessions\", \"show my chats in this repo\", \"which sessions are unfinished\", \"my codex sessions last week\", or any request to enumerate history rather than keyword-search it.\n按工具 / 工程目录 / 时间列出历史会话，用于'我昨天在某个项目里都聊了什么'这类回溯。中文触发词：最近会话、最近的会话、会话列表、列一下会话、列出会话、看下会话、看看会话、我的会话、有哪些会话、昨天的会话、今天的会话、本周会话、这个项目的会话、没做完的会话、未完成会话。",
+            "description": "List / browse past AI sessions by tool, project directory, title, state or time range. USE THIS for \"what was I working on yesterday\", \"list my recent sessions\", \"show my chats in this repo\", \"which sessions are unfinished\", \"my codex sessions last week\", or any request to enumerate history rather than keyword-search it.\n按工具 / 工程目录 / 时间列出历史会话，用于'我昨天在某个项目里都聊了什么'这类回溯。中文触发词：最近会话、最近的会话、会话列表、妮蔻会话、飞书机器人会话（nikou_only=true）、列一下会话、列出会话、看下会话、看看会话、我的会话、有哪些会话、昨天的会话、今天的会话、本周会话、这个项目的会话、没做完的会话、未完成会话。",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -197,6 +198,7 @@ fn tool_definitions() -> Vec<Value> {
                     "cwd": { "type": "string" },
                     "since": { "type": "string", "description": "7d / 36h / 2026-07-30 / 时间戳" },
                     "title": { "type": "string", "description": "标题包含的关键字" },
+                    "nikou_only": { "type": "boolean", "description": "仅列出已确认的妮蔻飞书会话" },
                     "state": {
                         "type": "string",
                         "description": "按状态过滤，支持 running/awaiting_input/awaiting_approval/interrupted/idle/done/unfinished，也接受中文：进行中/待我回复/待确认/已被打断/空闲/已完成/未完成"
@@ -222,13 +224,14 @@ fn tool_definitions() -> Vec<Value> {
                 "properties": {
                     "tool": { "type": "string", "enum": tool_enum },
                     "cwd": { "type": "string" },
-                    "since": { "type": "string", "description": "回看范围，默认 2d" }
+                    "since": { "type": "string", "description": "回看范围，默认 2d" },
+                    "nikou_only": { "type": "boolean", "description": "仅查询妮蔻飞书会话" }
                 }
             }
         }),
         json!({
             "name": "session_read",
-            "description": "Read the transcript of one session as Markdown. USE THIS after session_search / session_list to actually see what was said, or for \"show me that conversation\", \"open that session\", \"what exactly did it say\", \"read the last N messages\". Tool output is stripped and a character budget is applied by default so it won't blow up the context.\n读取某个会话的正文（Markdown），默认剔除工具输出并限制字符预算。中文触发词：读会话、看会话内容、打开会话、会话正文、聊天记录、当时说了什么、原文、最后几条消息、翻一下那个会话。",
+            "description": "Read the transcript of one session as Markdown. USE THIS after session_search / session_list to actually see what was said, or for \"show me that conversation\", \"open that session\", \"what exactly did it say\", \"read the last N messages\". Tool output is stripped and a character budget is applied by default so it won't blow up the context.\n读取某个会话的正文（Markdown），默认剔除工具输出并限制字符预算。中文触发词：读会话、看会话内容、打开会话、会话正文、聊天记录、妮蔻会话来源和群聊话题路由、当时说了什么、原文、最后几条消息、翻一下那个会话。",
             "inputSchema": {
                 "type": "object",
                 "properties": {

@@ -22,6 +22,7 @@ fn default_limit() -> usize {
 #[derive(Debug, Deserialize, Default)]
 #[serde(default)]
 pub struct SearchArgs {
+    pub nikou_only: bool,
     pub query: String,
     pub tool: Option<String>,
     pub cwd: Option<String>,
@@ -36,6 +37,7 @@ pub struct SearchArgs {
 #[derive(Debug, Deserialize, Default)]
 #[serde(default)]
 pub struct ListArgs {
+    pub nikou_only: bool,
     pub tool: Option<String>,
     pub cwd: Option<String>,
     pub since: Option<String>,
@@ -102,6 +104,7 @@ pub fn search(index: &mut Index, args: &SearchArgs) -> Result<Value> {
     }
     ensure_fresh(index)?;
     let options = SearchOptions {
+        nikou_only: args.nikou_only,
         query: args.query.clone(),
         tool: normalize_tool(args.tool.as_deref())?,
         cwd: args.cwd.clone(),
@@ -119,6 +122,8 @@ pub fn search(index: &mut Index, args: &SearchArgs) -> Result<Value> {
         "count": hits.len(),
         "hits": hits.iter().map(|hit| json!({
             "uid": hit.uid,
+            "is_nikou": hit.is_nikou,
+            "nikou_origin": hit.nikou_origin,
             "tool": hit.tool,
             "title": hit.title,
             "cwd": hit.cwd,
@@ -143,6 +148,7 @@ pub fn list(index: &mut Index, args: &ListArgs) -> Result<Value> {
         _ => None,
     };
     let options = ListOptions {
+        nikou_only: args.nikou_only,
         tool: normalize_tool(args.tool.as_deref())?,
         cwd: args.cwd.clone(),
         since: parse_time(args.since.as_deref())?,
@@ -168,6 +174,8 @@ pub fn list(index: &mut Index, args: &ListArgs) -> Result<Value> {
         }
         rows.push(json!({
             "uid": session.uid,
+        "is_nikou": session.is_nikou,
+        "nikou_origin": session.nikou_origin,
             "tool": session.tool,
             "title": session.title,
             "cwd": session.cwd,
@@ -218,6 +226,7 @@ pub fn status(index: &mut Index, args: &UidArgs) -> Result<Value> {
 pub fn active(index: &mut Index, args: &ListArgs) -> Result<Value> {
     ensure_fresh(index)?;
     let options = ListOptions {
+        nikou_only: args.nikou_only,
         tool: normalize_tool(args.tool.as_deref())?,
         cwd: args.cwd.clone(),
         // 只看最近两天，更早的会话不可能还挂着
@@ -236,6 +245,8 @@ pub fn active(index: &mut Index, args: &ListArgs) -> Result<Value> {
         let status = probe.evaluate(session, &last);
         let entry = json!({
             "uid": session.uid,
+        "is_nikou": session.is_nikou,
+        "nikou_origin": session.nikou_origin,
             "tool": session.tool,
             "title": session.title,
             "cwd": session.cwd,
@@ -309,6 +320,9 @@ pub fn read(index: &mut Index, args: &ReadArgs) -> Result<(String, Value)> {
         messages.len(),
         session.resume_command.clone().unwrap_or_default(),
     ));
+    if let Some(origin) = &session.nikou_origin {
+        out.push_str(&origin.render_markdown());
+    }
     for message in &messages {
         let who = match (message.role.as_str(), message.kind.as_str()) {
             ("user", _) => "用户".to_string(),
@@ -327,6 +341,8 @@ pub fn read(index: &mut Index, args: &ReadArgs) -> Result<(String, Value)> {
 
     let meta = json!({
         "uid": session.uid,
+        "is_nikou": session.is_nikou,
+        "nikou_origin": session.nikou_origin,
         "tool": session.tool,
         "returned": messages.len(),
         "total": session.message_count,
@@ -387,6 +403,8 @@ pub fn resume_cmd(index: &mut Index, args: &ResumeArgs) -> Result<Value> {
     };
     Ok(json!({
         "uid": session.uid,
+        "is_nikou": session.is_nikou,
+        "nikou_origin": session.nikou_origin,
         "tool": session.tool,
         "cwd": session.cwd,
         "command": command,

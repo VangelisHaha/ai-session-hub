@@ -34,6 +34,8 @@ pub const OPEN_SIGNALS: [&str; 8] = [
 
 #[derive(Debug, Serialize)]
 pub struct Digest {
+    pub is_nikou: bool,
+    pub nikou_origin: Option<crate::nikou::NikouOrigin>,
     pub uid: String,
     pub tool: String,
     pub title: Option<String>,
@@ -99,6 +101,8 @@ pub fn build(session: &SessionRow, messages: &[MessageRow]) -> Digest {
     }
 
     Digest {
+        is_nikou: session.is_nikou,
+        nikou_origin: session.nikou_origin.clone(),
         uid: session.uid.clone(),
         tool: session.tool.clone(),
         title: session.title.clone(),
@@ -135,6 +139,10 @@ impl Digest {
         ));
         if let Some(resume) = &self.resume_command {
             out.push_str(&format!("- 原生续聊：`{resume}`\n"));
+        }
+
+        if let Some(origin) = &self.nikou_origin {
+            out.push_str(&origin.render_markdown());
         }
 
         section(&mut out, "用户诉求（按时间序）", &self.user_requests, true);
@@ -285,14 +293,14 @@ pub fn strip_prompt_wrapper(text: &str) -> String {
     let mut skipping = false;
     for line in text.lines() {
         let trimmed = line.trim();
-        if trimmed.starts_with("[SYSTEM_CONTEXT_BEGIN]")
+        if (trimmed.starts_with("[SYSTEM_") && trimmed.ends_with("_BEGIN]"))
             || trimmed.starts_with("--- CONTEXT ENTRY BEGIN ---")
             || trimmed.starts_with("<environment_context>")
         {
             skipping = true;
             continue;
         }
-        if trimmed.starts_with("[SYSTEM_CONTEXT_END]")
+        if (trimmed.starts_with("[SYSTEM_") && trimmed.ends_with("_END]"))
             || trimmed.starts_with("--- CONTEXT ENTRY END ---")
             || trimmed.starts_with("</environment_context>")
         {
@@ -336,6 +344,8 @@ mod tests {
 
     fn session() -> SessionRow {
         SessionRow {
+            is_nikou: false,
+            nikou_origin: None,
             uid: "kiro:s1".to_string(),
             tool: "kiro".to_string(),
             session_id: "s1".to_string(),

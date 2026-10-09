@@ -83,6 +83,8 @@ impl SessionPayload {
 /// 会话元信息（索引查询产物）
 #[derive(Debug, Clone, Serialize)]
 pub struct SessionRow {
+    pub is_nikou: bool,
+    pub nikou_origin: Option<crate::nikou::NikouOrigin>,
     pub uid: String,
     pub tool: String,
     pub session_id: String,

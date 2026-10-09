@@ -303,3 +303,30 @@ cargo clippy --all-targets --all-features -- -D warnings
 本项目采用 [MIT License](LICENSE)。第三方 Rust 依赖的许可证以各依赖自身发布的许可证文本为准。
 
 `rusqlite` 通过 `bundled` 特性静态链接 SQLite；SQLite 本身属于公有领域（public domain）。若分发编译后的二进制，建议随包附带一份第三方许可证清单，例如用 [`cargo-about`](https://github.com/EmbarkStudios/cargo-about) 或 [`cargo-license`](https://github.com/onur/cargo-license) 生成。
+
+## 妮蔻会话识别与飞书接管
+
+核验日期：2026-10-09。首条真实用户输入以 `[SYSTEM_NIKOU_SESSION_ORIGIN_BEGIN]` 来源块开始，且 version=1、source=feishu_bot、UID 与聊天范围合法时，索引标记 `is_nikou=true`，并提供 `nikou_origin`。原生工具仍保留 codex/claude/kiro/pi 等工具标识。用户引用、工具输出、助手消息和手动会话中的后续标记不作为创建来源。
+
+```bash
+ash list --nikou-only
+ash search '待处理问题' --nikou-only
+ash read codex:SESSION_ID --tail 10
+ash handoff codex:SESSION_ID --to claude --note '接管并核对原飞书话题'
+```
+
+MCP 的 session_list、session_search、session_active 使用 `nikou_only=true` 过滤。列表、搜索、读取、摘要和交接结果保留来源；读取、摘要和交接包另带群聊 / 话题查询命令和回复模板，不受 tail 裁剪首轮提示词影响。
+
+来源协议包含 `chatId`（oc_ 群聊或单聊 ID）、`threadId`（实际话题 ID）、`rootMessageId`、`replyMessageId`（om_ 回复目标）、`replyInThread`、`botAppId`、`botName`，以及原有 uid/cwd/engine/chatType/topicId/conversationKey/topicAliases/requesterUserId/requesterName/sourceMessageId。`topicId` 兼容旧格式，不能一律当作实际话题 ID。未知字段不会复制到交接元信息。
+
+```bash
+lark-cli whoami
+lark-cli im +chat-messages-list --chat-id oc_EXAMPLE --as bot
+lark-cli im +threads-messages-list --thread omt_EXAMPLE --as bot
+# 替换为用户授权的正文，并确认当前 CLI 应用就是原妮蔻 Bot 后执行
+lark-cli im +messages-reply --message-id om_CURRENT --reply-in-thread --as bot --text '已授权的回复正文'
+```
+
+话题读取使用 omt_ 或已知 om_ 消息，回复必须使用 om_ 消息 ID。`--as bot` 不自动选择妮蔻应用，先用 whoami 核对应用 ID 与 botAppId；需要切换时使用已配置的 --profile。接管元信息不代表消息发送授权。
+
+旧索引自动增补来源列并从已索引消息回填，保留原生文件偏移和消息，无需全量重建。旧来源块可用 topicId/sourceMessageId 恢复明确的读取/回复路由；没有来源块的旧会话保持未确认，不凭目录或“妮蔻”关键词猜测。

@@ -40,6 +40,8 @@ pub struct ToolSyncStat {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct SearchHit {
+    pub is_nikou: bool,
+    pub nikou_origin: Option<crate::nikou::NikouOrigin>,
     pub uid: String,
     pub tool: String,
     pub session_id: String,
@@ -64,6 +66,7 @@ pub struct MessageRow {
 
 #[derive(Debug, Clone, Default)]
 pub struct SearchOptions {
+    pub nikou_only: bool,
     pub query: String,
     pub tool: Option<String>,
     pub cwd: Option<String>,
@@ -77,6 +80,7 @@ pub struct SearchOptions {
 
 #[derive(Debug, Clone, Default)]
 pub struct ListOptions {
+    pub nikou_only: bool,
     pub tool: Option<String>,
     pub cwd: Option<String>,
     pub since: Option<i64>,
@@ -92,6 +96,56 @@ pub struct ReadOptions {
     /// 只要对话正文（丢掉 tool_use / tool_result）——回溯"聊了什么"时最有用
     pub only_text: bool,
     pub budget_chars: Option<usize>,
+}
+
+fn read_nikou_json(raw: Option<String>) -> Option<crate::nikou::NikouOrigin> {
+    serde_json::from_str(raw.as_deref()?).ok()
+}
+
+/// 创建来源只看首条真实用户输入；已确认的会话才允许同范围的后续标记刷新回复路由。
+fn refresh_nikou_origin(conn: &Connection, uid: &str, tool: &str, cwd: Option<&str>) -> Result<()> {
+    let mut stmt = conn.prepare("SELECT content FROM messages WHERE session_uid=?1 AND role='user' AND kind='text' ORDER BY seq")?;
+    let mut first = None;
+    for raw in stmt.query_map([uid], |row| row.get::<_, String>(0))? {
+        let raw = raw?;
+        if raw.trim().is_empty() || crate::nikou::is_preamble(&raw) {
+            continue;
+        }
+        first = Some(raw);
+        break;
+    }
+    let origin = first
+        .as_deref()
+        .and_then(crate::nikou::parse)
+        .filter(|origin| origin.matches_session(tool, cwd));
+    let mut latest = origin.clone();
+    if let Some(origin) = &origin {
+        let mut stmt = conn.prepare("SELECT content FROM messages WHERE session_uid=?1 AND role='user' AND kind='text' AND ltrim(content) LIKE ?2 ORDER BY seq DESC")?;
+        for raw in stmt.query_map(params![uid, format!("{}%", crate::nikou::BEGIN)], |row| {
+            row.get::<_, String>(0)
+        })? {
+            if let Some(candidate) = crate::nikou::parse(&raw?) {
+                if origin.same_scope(&candidate) {
+                    latest = Some(candidate);
+                    break;
+                }
+            }
+        }
+    }
+    let json = latest.as_ref().map(serde_json::to_string).transpose()?;
+    let title = if origin.is_some() {
+        crate::model::first_line_summary(
+            &crate::digest::strip_prompt_wrapper(first.as_deref().unwrap_or_default()),
+            120,
+        )
+    } else {
+        None
+    };
+    conn.execute(
+        "UPDATE sessions SET nikou_origin=?2, title=COALESCE(?3,title) WHERE uid=?1",
+        params![uid, json, title],
+    )?;
+    Ok(())
 }
 
 impl Index {
@@ -183,6 +237,35 @@ impl Index {
                 offset_bytes INTEGER NOT NULL DEFAULT 0
              );",
         )?;
+        // 独立的增量迁移：保留既有消息和 JSONL 偏移，旧索引无需重读原生历史。
+        let has_origin = self
+            .conn
+            .prepare("PRAGMA table_info(sessions)")?
+            .query_map([], |row| row.get::<_, String>(1))?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+            .iter()
+            .any(|name| name == "nikou_origin");
+        if !has_origin {
+            self.conn
+                .execute_batch("ALTER TABLE sessions ADD COLUMN nikou_origin TEXT;")?;
+        }
+        if self.get_meta("nikou_route_version")?.as_deref() != Some("1") || !has_origin {
+            let ids = self
+                .conn
+                .prepare("SELECT uid, tool, cwd FROM sessions")?
+                .query_map([], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, Option<String>>(2)?,
+                    ))
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            for (uid, tool, cwd) in ids {
+                refresh_nikou_origin(&self.conn, &uid, &tool, cwd.as_deref())?;
+            }
+            self.set_meta("nikou_route_version", "1")?;
+        }
         self.set_meta("schema_version", &SCHEMA_VERSION.to_string())?;
         Ok(())
     }
@@ -410,6 +493,7 @@ impl Index {
                 output.new_offset as i64
             ],
         )?;
+        refresh_nikou_origin(&tx, &uid, &session.tool, session.cwd.as_deref())?;
         tx.commit()?;
         Ok(inserted)
     }
@@ -519,11 +603,14 @@ impl Index {
         sql.push_str(
             "),
             joined AS (
-                SELECT hit.*, s.tool, s.session_id, s.title, s.cwd,
+                SELECT hit.*, s.tool, s.session_id, s.title, s.cwd, s.nikou_origin,
                        ROW_NUMBER() OVER (PARTITION BY hit.session_uid ORDER BY hit.ts DESC, hit.seq DESC) AS rn
                 FROM hit JOIN sessions s ON s.uid = hit.session_uid
                 WHERE 1=1\n",
         );
+        if options.nikou_only {
+            sql.push_str(" AND s.nikou_origin IS NOT NULL\n");
+        }
         if let Some(tool) = &options.tool {
             sql.push_str(" AND s.tool = ?\n");
             binds.push(Box::new(tool.clone()));
@@ -534,7 +621,7 @@ impl Index {
         }
         sql.push_str(
             ")
-            SELECT session_uid, tool, session_id, title, cwd, role, kind, seq, ts, snippet
+            SELECT session_uid, tool, session_id, title, cwd, role, kind, seq, ts, snippet, nikou_origin
             FROM joined WHERE rn <= ?
             ORDER BY COALESCE(ts, 0) DESC, seq DESC
             LIMIT ?",
@@ -546,6 +633,8 @@ impl Index {
         let params: Vec<&dyn rusqlite::ToSql> = binds.iter().map(|bind| bind.as_ref()).collect();
         let rows = stmt.query_map(params.as_slice(), |row| {
             Ok(SearchHit {
+                is_nikou: row.get::<_, Option<String>>(10)?.is_some(),
+                nikou_origin: read_nikou_json(row.get(10)?),
                 uid: row.get(0)?,
                 tool: row.get(1)?,
                 session_id: row.get(2)?,
@@ -563,10 +652,13 @@ impl Index {
 
     pub fn list_sessions(&self, options: &ListOptions) -> Result<Vec<SessionRow>> {
         let mut sql = String::from(
-            "SELECT uid, tool, session_id, title, cwd, created_at, updated_at, source_path, message_count
+            "SELECT uid, tool, session_id, title, cwd, created_at, updated_at, source_path, message_count, nikou_origin
              FROM sessions WHERE 1=1",
         );
         let mut binds: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+        if options.nikou_only {
+            sql.push_str(" AND nikou_origin IS NOT NULL");
+        }
         if let Some(tool) = &options.tool {
             sql.push_str(" AND tool = ?");
             binds.push(Box::new(tool.clone()));
@@ -592,6 +684,8 @@ impl Index {
             let tool: String = row.get(1)?;
             let session_id: String = row.get(2)?;
             Ok(SessionRow {
+                is_nikou: row.get::<_, Option<String>>(9)?.is_some(),
+                nikou_origin: read_nikou_json(row.get(9)?),
                 uid: row.get(0)?,
                 resume_command: Some(crate::tools::resume_command(&tool, &session_id)),
                 tool,
@@ -611,13 +705,15 @@ impl Index {
         Ok(self
             .conn
             .query_row(
-                "SELECT uid, tool, session_id, title, cwd, created_at, updated_at, source_path, message_count
+                "SELECT uid, tool, session_id, title, cwd, created_at, updated_at, source_path, message_count, nikou_origin
                  FROM sessions WHERE uid = ?1",
                 [uid],
                 |row| {
                     let tool: String = row.get(1)?;
                     let session_id: String = row.get(2)?;
                     Ok(SessionRow {
+                is_nikou: row.get::<_, Option<String>>(9)?.is_some(),
+                nikou_origin: read_nikou_json(row.get(9)?),
                         uid: row.get(0)?,
                         resume_command: Some(crate::tools::resume_command(&tool, &session_id)),
                         tool,
@@ -1037,6 +1133,152 @@ mod tests {
                 .unwrap()
                 .message_count,
             2
+        );
+    }
+    #[test]
+    fn nikou_origin_survives_incremental_updates_and_filters() {
+        let mut index = Index::memory().unwrap();
+        seed(
+            &mut index,
+            "codex",
+            "bot",
+            vec![
+                Message::text("user", "# AGENTS.md 指令", None),
+                Message::text("user", crate::nikou::tests::marker("om_first"), None),
+                Message::text("assistant", "处理完成", None),
+            ],
+        );
+        let row = index.get_session("codex:bot").unwrap().unwrap();
+        assert!(row.is_nikou);
+        assert_eq!(row.title.as_deref(), Some("继续处理"));
+        let source = SourceStat {
+            tool: "codex",
+            key: "/tmp/bot.jsonl".into(),
+            path: None,
+            size: 2,
+            mtime_ms: 2,
+            incremental: true,
+        };
+        let output = crate::adapters::ParseOutput {
+            session: SessionPayload {
+                tool: "codex".into(),
+                session_id: "bot".into(),
+                title: None,
+                cwd: None,
+                created_at: None,
+                updated_at: None,
+                source_path: source.key.clone(),
+                messages: vec![
+                    Message::text("user", crate::nikou::tests::marker("om_second"), None),
+                    Message::text(
+                        "user",
+                        crate::nikou::tests::marker("om_wrong").replace("oc_demo", "oc_other"),
+                        None,
+                    ),
+                ],
+            },
+            new_offset: 20,
+            full_replace: false,
+        };
+        index.apply_parse_output(&source, output, false).unwrap();
+        let row = index.get_session("codex:bot").unwrap().unwrap();
+        assert_eq!(row.nikou_origin.unwrap().reply_message_id, "om_second");
+        seed(
+            &mut index,
+            "codex",
+            "local",
+            vec![
+                Message::text("user", "继续处理", None),
+                Message::text("user", crate::nikou::tests::marker("om_later"), None),
+            ],
+        );
+        assert!(!index.get_session("codex:local").unwrap().unwrap().is_nikou);
+        let rows = index
+            .list_sessions(&ListOptions {
+                nikou_only: true,
+                limit: 10,
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(rows.len(), 1);
+        let hits = index
+            .search(&SearchOptions {
+                nikou_only: true,
+                query: "继续处理".into(),
+                limit: 10,
+                max_per_session: 1,
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(hits.len(), 1);
+        assert!(hits[0].is_nikou);
+        assert!(hits[0].nikou_origin.is_some());
+    }
+
+    #[test]
+    fn tools_quotes_and_late_markers_never_claim_creation() {
+        let mut index = Index::memory().unwrap();
+        let marker = crate::nikou::tests::marker("om_first");
+        seed(
+            &mut index,
+            "codex",
+            "tool",
+            vec![
+                Message::tool_result(None, &marker, None),
+                Message::text("user", "手动创建", None),
+            ],
+        );
+        seed(
+            &mut index,
+            "codex",
+            "quote",
+            vec![Message::text("user", format!("这是示例：\n{marker}"), None)],
+        );
+        seed(
+            &mut index,
+            "claude",
+            "mismatch",
+            vec![Message::text("user", &marker, None)],
+        );
+        for id in ["codex:tool", "codex:quote", "claude:mismatch"] {
+            assert!(!index.get_session(id).unwrap().unwrap().is_nikou);
+        }
+    }
+
+    #[test]
+    fn old_index_backfills_origin_without_losing_messages_or_offsets() {
+        let mut index = Index::memory().unwrap();
+        seed(
+            &mut index,
+            "codex",
+            "old",
+            vec![Message::text(
+                "user",
+                crate::nikou::tests::marker("om_first"),
+                None,
+            )],
+        );
+        index.conn.execute_batch("ALTER TABLE sessions DROP COLUMN nikou_origin; DELETE FROM meta WHERE key='nikou_route_version';").unwrap();
+        index.migrate().unwrap();
+        let row = index.get_session("codex:old").unwrap().unwrap();
+        assert!(row.is_nikou);
+        assert_eq!(row.message_count, 1);
+        assert_eq!(
+            index
+                .load_source("/tmp/codex-old.jsonl")
+                .unwrap()
+                .unwrap()
+                .offset_bytes,
+            10
+        );
+        index.migrate().unwrap();
+        assert_eq!(
+            index
+                .get_session("codex:old")
+                .unwrap()
+                .unwrap()
+                .message_count,
+            1
         );
     }
 }

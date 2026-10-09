@@ -12,6 +12,7 @@ mod launcher;
 mod liveness;
 mod mcp;
 mod model;
+mod nikou;
 mod ops;
 mod paths;
 mod platform;
@@ -43,6 +44,7 @@ const USAGE: &str = r#"ai-session-hub (ash) — 跨 AI 工具会话检索与交�
   --role <user|assistant|tool>            --limit <N>
   --tail <N>            --from-seq <N>    --budget <字符数>
   --with-tool-results   把工具输出也算进来（默认剔除）
+  --nikou-only          仅查询来源已确认的妮蔻飞书会话（search / list / active）
   --only-text           只要对话正文，丢掉工具调用与输出
   --json                以 JSON 输出（read / digest 默认输出 Markdown）
 "#;
@@ -86,6 +88,7 @@ fn run() -> Result<()> {
             let result = ops::search(
                 &mut index,
                 &ops::SearchArgs {
+                    nikou_only: flags.contains_key("nikou-only"),
                     query: positional.join(" "),
                     tool: flags.get("tool").cloned().flatten(),
                     cwd: flags.get("cwd").cloned().flatten(),
@@ -213,6 +216,7 @@ type Flags = HashMap<String, Option<String>>;
 
 fn list_args(flags: &Flags) -> ops::ListArgs {
     ops::ListArgs {
+        nikou_only: flags.contains_key("nikou-only"),
         tool: flags.get("tool").cloned().flatten(),
         cwd: flags.get("cwd").cloned().flatten(),
         since: flags.get("since").cloned().flatten(),
