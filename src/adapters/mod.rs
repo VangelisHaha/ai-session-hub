@@ -5,9 +5,11 @@
 //! 只从上次消费到的位置往后读，且只消费以换行结尾的完整行（尾部半行留到下次）。
 //! Codex 本机会话目录已有 1.7G，全量重读代价太高，偏移增量是必须的。
 //!
+//! Antigravity 的 transcript_full.jsonl 同样是 append-only JSONL，走字节偏移增量。
 //! Gemini（单文件 JSON）、Kiro IDE（每会话一个 JSON）与 OpenCode（SQLite）
 //! 体量小且会整体重写，采用全量重解析。
 
+pub mod antigravity;
 pub mod claude;
 pub mod codex;
 pub mod gemini;
@@ -66,6 +68,7 @@ pub fn all_adapters() -> Vec<Box<dyn Adapter>> {
         Box::new(pi::PiAdapter),
         Box::new(workbuddy::WorkBuddyAdapter),
         Box::new(gemini::GeminiAdapter),
+        Box::new(antigravity::AntigravityAdapter),
         Box::new(opencode::OpenCodeAdapter),
     ]
 }

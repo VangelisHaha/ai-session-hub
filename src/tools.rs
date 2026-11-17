@@ -7,9 +7,9 @@
 //! 命令里的可执行文件一律由 `launcher::resolve` 解析：Kimi、WorkBuddy 的 CLI
 //! 默认不在 PATH 上，直接写裸名字生成出来的命令是跑不了的。
 
-use crate::adapters::{claude, codex, gemini, kimi, kiro, kiro_ide, opencode, pi, workbuddy};
+use crate::adapters::{antigravity, claude, codex, gemini, kimi, kiro, kiro_ide, opencode, pi, workbuddy};
 
-pub const SUPPORTED_TOOLS: [&str; 9] = [
+pub const SUPPORTED_TOOLS: [&str; 10] = [
     "claude",
     "codex",
     "kiro",
@@ -19,6 +19,7 @@ pub const SUPPORTED_TOOLS: [&str; 9] = [
     "workbuddy",
     "gemini",
     "opencode",
+    "antigravity",
 ];
 
 pub fn resume_command(tool: &str, session_id: &str) -> String {
@@ -33,6 +34,7 @@ pub fn resume_command(tool: &str, session_id: &str) -> String {
         "workbuddy" => workbuddy::resume_command(&bin, session_id),
         "gemini" => gemini::resume_command(&bin, session_id),
         "opencode" => opencode::resume_command(&bin, session_id),
+        "antigravity" => antigravity::resume_command(&bin, session_id),
         other => format!("# 未知工具 {other}，无法生成恢复命令"),
     }
 }
@@ -53,6 +55,8 @@ pub fn resume_with_prompt(tool: &str, session_id: &str, prompt: &str) -> String 
         "workbuddy" => format!("{bin} --resume {session_id} {quoted}"),
         "gemini" => format!("{bin} --resume {session_id} {quoted}"),
         "opencode" => format!("{bin} run -s {session_id} {quoted}"),
+        // -i：带着首条 prompt 进入交互并续聊；-p 是一次性打印模式
+        "antigravity" => format!("{bin} --conversation {session_id} -i {quoted}"),
         other => format!("# 未知工具 {other}"),
     }
 }
@@ -76,6 +80,7 @@ pub fn handoff_command(tool: &str, brief_path: &str, note: &str) -> String {
         "pi" => format!("{bin} {quoted}"),
         "workbuddy" => format!("{bin} {quoted}"),
         "opencode" => format!("{bin} run {quoted}"),
+        "antigravity" => format!("{bin} -i {quoted}"),
         other => format!("# 未知工具 {other}"),
     }
 }
@@ -110,6 +115,10 @@ mod tests {
         assert_eq!(
             resume_command("kimi", "session_id1"),
             format!("{} -r session_id1", bin("kimi"))
+        );
+        assert_eq!(
+            resume_command("antigravity", "id1"),
+            format!("{} --conversation id1", bin("antigravity"))
         );
         assert_eq!(
             resume_command("workbuddy", "id1"),

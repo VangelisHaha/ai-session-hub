@@ -453,6 +453,7 @@ fn normalize_tool(tool: Option<&str>) -> Result<Option<String>> {
         "pi-agent" | "piagent" | "pi_agent" | "pi-cli" => "pi",
         "work-buddy" | "codebuddy" | "code-buddy" | "cbc" | "wb" => "workbuddy",
         "gemini-cli" => "gemini",
+        "agy" | "ag" | "antigravity-cli" | "antigravity-ide" => "antigravity",
         other => other,
     };
     if !crate::tools::SUPPORTED_TOOLS.contains(&normalized) {

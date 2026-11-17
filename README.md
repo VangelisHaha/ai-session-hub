@@ -8,7 +8,7 @@ Local session search, context recall, and cross-tool handoff across AI coding to
 
 ## Features
 
-- Search history across Claude Code, Codex, Kiro CLI, Kiro IDE, Kimi Code CLI, pi, WorkBuddy, Gemini CLI, and OpenCode.
+- Search history across Claude Code, Codex, Kiro CLI, Kiro IDE, Kimi Code CLI, pi, WorkBuddy, Gemini CLI, OpenCode, and Antigravity.
 - Filter by project directory, tool, time range, and role, with Chinese phrase search supported.
 - Read session transcripts, with a character budget and tool output stripped by default.
 - Produce deterministic digests: user intent, assistant takeaways, commands executed, file paths, and likely unfinished items.
@@ -29,6 +29,9 @@ Local session search, context recall, and cross-tool handoff across AI coding to
 | WorkBuddy | `~/.workbuddy/projects/**/*.jsonl`, `~/.codebuddy/projects/**/*.jsonl` | Incremental JSONL by byte offset |
 | Gemini CLI | `~/.gemini/tmp/*/chats/session-*.json` | Full JSON parse |
 | OpenCode | `~/.local/share/opencode/opencode.db` | Full SQLite parse |
+| Antigravity (desktop 2.0 / `agy` CLI) | `~/.gemini/antigravity/brain/<conversation-id>/.system_generated/logs/transcript_full.jsonl` | Incremental JSONL by byte offset |
+
+The Antigravity desktop app (2.0) and the `agy` CLI share `~/.gemini/antigravity`. The tool id is `antigravity` (`--tool agy` also works). Messages come from `transcript_full.jsonl` (not the truncated `transcript.jsonl`): `USER_INPUT` keeps only the `<USER_REQUEST>` body, `PLANNER_RESPONSE` yields assistant text and `tool_calls` (`thinking` is not indexed), `GENERIC` is a tool result (the `Created At:` header is stripped), and `SYSTEM_MESSAGE` is skipped. Title and working directory come from `conversation_summaries.db` (read-only): the AI-generated title, and the first `workspace_uris` entry as cwd; conversations outside a project have no cwd. Resume is `agy --conversation <id>`, or `agy --conversation <id> -i '<prompt>'` with a first prompt. The store has no per-conversation process marker, so liveness relies on the transcript mtime and cannot detect "process alive, waiting for approval". Only the desktop app has been verified to write to this directory; whether `agy` CLI conversations land in the same place is not confirmed.
 
 The Kiro IDE user directory is `~/Library/Application Support/Kiro/User` on macOS and `~/.config/Kiro/User` on Linux; both are probed. Kiro IDE sessions use the tool id `kiro-ide` and are separate from Kiro CLI (`kiro`): the session IDs are not interchangeable and IDE sessions cannot be resumed from the command line.
 
@@ -152,6 +155,17 @@ command = "/absolute/path/to/ash"
 args = ["mcp"]
 ```
 
+### Antigravity 2.0 / agy CLI
+
+The desktop app and `agy` share `~/.gemini/config/mcp_config.json`; add the server with the CLI:
+
+```bash
+agy mcp add ai-session-hub -- "$HOME/.local/bin/ash" mcp
+agy mcp list   # confirm it is enabled
+```
+
+You can also edit `mcp_config.json` by hand using the format under "Any other MCP client".
+
 ### Kimi Code CLI
 
 Add to `~/.kimi-code/mcp.json` (project scope: `<cwd>/.kimi-code/mcp.json`):
@@ -239,6 +253,7 @@ For testing, isolating the index, or pointing at custom AI tool locations:
 | `ASH_WORKBUDDY_DIR` | Override the WorkBuddy `projects` directory; when set, only that directory is used |
 | `ASH_GEMINI_DIR` | Override the Gemini temp directory |
 | `ASH_OPENCODE_DB` | Override the OpenCode SQLite database path |
+| `ASH_ANTIGRAVITY_DIR` | Override the Antigravity data root (default `~/.gemini/antigravity`) |
 | `ASH_<TOOL>_BIN` | Override the executable used in generated commands, e.g. `ASH_WORKBUDDY_BIN`, `ASH_KIMI_BIN`, `ASH_KIRO_IDE_BIN` |
 | `ASH_INDEX_TOOL_RESULTS` | Set to `1` to add tool results to full-text search |
 
@@ -254,6 +269,7 @@ ash sync --full
 
 - Chinese search uses SQLite FTS5 `trigram`; queries shorter than 3 characters fall back to `LIKE`.
 - Claude, Codex, Kiro CLI, Kimi Code CLI, pi, and WorkBuddy are read incrementally by byte offset, consuming only complete newline-terminated JSONL lines.
+- Antigravity transcripts are append-only JSONL and use byte-offset increments like Claude and Codex.
 - Kiro IDE, Gemini, and OpenCode are parsed in full, because their source files or database can be rewritten wholesale.
 - Session content is truncated uniformly: up to 24,000 characters for plain text, 600 for tool calls, and 1,200 for tool results.
 - Digests are rule-based extraction with no model calls. Consumers should still verify them; they are not an authoritative audit result.
@@ -294,7 +310,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 
 ## Trademarks and disclaimer
 
-This project is an independent third-party tool with no affiliation, sponsorship, or endorsement from Anthropic, OpenAI, Amazon, Google, Moonshot AI, Tencent, OpenCode, or any other vendor. Claude, Claude Code, Codex, Kiro, Kimi, Kimi Code, pi, WorkBuddy, CodeBuddy, Gemini, OpenCode, and other names and marks belong to their respective owners and are used here only to describe the session sources this tool is compatible with.
+This project is an independent third-party tool with no affiliation, sponsorship, or endorsement from Anthropic, OpenAI, Amazon, Google, Moonshot AI, Tencent, OpenCode, or any other vendor. Claude, Claude Code, Codex, Kiro, Kimi, Kimi Code, pi, WorkBuddy, CodeBuddy, Gemini, OpenCode, Antigravity, and other names and marks belong to their respective owners and are used here only to describe the session sources this tool is compatible with.
 
 This project only reads session files that already exist locally on the machine running it. It does not modify, upload, or redistribute any third-party software's code or data. Users are responsible for confirming they have the rights to the data being read, and for complying with the terms of service of the AI tools involved as well as their organization's data governance rules.
 

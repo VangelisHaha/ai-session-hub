@@ -2,7 +2,7 @@
 name = "ai-session-hub"
 version = "0.1.0"
 edition = "2021"
-description = "跨 AI 工具（Claude Code / Codex / Kiro / Gemini / OpenCode）的会话检索、上下文回溯与跨工具交接"
+description = "跨 AI 工具（Claude Code / Codex / Kiro / Gemini / OpenCode / Antigravity）的会话检索、上下文回溯与跨工具交接"
 license = "MIT"
 
 [[bin]]

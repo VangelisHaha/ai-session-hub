@@ -127,6 +127,15 @@ pub fn gemini_tmp_dir() -> PathBuf {
     home_dir().join(".gemini/tmp")
 }
 
+/// Antigravity 数据根目录（桌面端 2.0 与 `agy` CLI 共用）：
+/// `brain/<id>/.system_generated/logs/transcript_full.jsonl` + `conversation_summaries.db`
+pub fn antigravity_dir() -> PathBuf {
+    if let Some(dir) = std::env::var_os("ASH_ANTIGRAVITY_DIR") {
+        return PathBuf::from(dir);
+    }
+    home_dir().join(".gemini/antigravity")
+}
+
 pub fn opencode_db_path() -> PathBuf {
     if let Some(path) = std::env::var_os("ASH_OPENCODE_DB") {
         return PathBuf::from(path);

@@ -34,6 +34,7 @@ fn binary_name(tool: &str) -> &'static str {
         "workbuddy" => "codebuddy",
         "gemini" => "gemini",
         "opencode" => "opencode",
+        "antigravity" => "agy",
         _ => "",
     }
 }

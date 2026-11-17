@@ -8,7 +8,7 @@
 
 ## 功能
 
-- 跨 Claude Code、Codex、Kiro CLI、Kiro IDE、Kimi Code CLI、pi、WorkBuddy、Gemini CLI、OpenCode 检索历史会话。
+- 跨 Claude Code、Codex、Kiro CLI、Kiro IDE、Kimi Code CLI、pi、WorkBuddy、Gemini CLI、OpenCode、Antigravity 检索历史会话。
 - 按工程目录、工具、时间、角色过滤，并支持中文短语检索。
 - 读取会话正文，默认限制字符预算并剔除工具输出。
 - 生成确定性摘要：用户诉求、助手要点、执行命令、文件路径和可能未完成事项。
@@ -29,6 +29,9 @@
 | WorkBuddy | `~/.workbuddy/projects/**/*.jsonl`、`~/.codebuddy/projects/**/*.jsonl` | JSONL 字节偏移增量 |
 | Gemini CLI | `~/.gemini/tmp/*/chats/session-*.json` | JSON 全量解析 |
 | OpenCode | `~/.local/share/opencode/opencode.db` | SQLite 全量解析 |
+| Antigravity（桌面端 2.0 / `agy` CLI） | `~/.gemini/antigravity/brain/<会话ID>/.system_generated/logs/transcript_full.jsonl` | JSONL 字节偏移增量 |
+
+Antigravity 桌面端 2.0 与 `agy` CLI 共用 `~/.gemini/antigravity`，工具标识为 `antigravity`（`--tool agy` 也可）。正文读 `transcript_full.jsonl`（不是被截断的 `transcript.jsonl`）：`USER_INPUT` 只取 `<USER_REQUEST>` 里的请求本身，`PLANNER_RESPONSE` 取助手文本与 `tool_calls`（`thinking` 不入索引），`GENERIC` 是工具结果（剥掉 `Created At:` 时间头），`SYSTEM_MESSAGE` 不入索引。标题和工程目录来自 `conversation_summaries.db`（只读）：标题用 AI 生成的，cwd 取 `workspace_uris` 第一项；不在工程内的会话没有 cwd。恢复命令是 `agy --conversation <id>`，带首句续聊为 `agy --conversation <id> -i '<提示词>'`。该会话库没有按会话的进程标记，活跃度只能靠 transcript 的修改时间判断，无法识别“进程仍在、等待审批”。`agy` CLI 的会话是否与桌面端落在同一目录，目前只验证了桌面端。
 
 Kimi Code CLI（命令 `kimi`）的一个会话是一个目录而不是一个文件：元信息在 `state.json`，正文在 `agents/<agent>/wire.jsonl`。wire 流里同一条消息会以多种事件重复出现，这里只认 `agent.message.appended`——它是唯一同时覆盖 user / assistant / tool 三种角色的事件；`context.append_message` 只有 user，还混入了注入给模型的上下文。助手的 `think` 思考块不入索引。会话 ID 自带 `session_` 前缀（如 `session_e1af002a-…`），恢复命令是 `kimi -r <sessionId>`；`kimi` 不接受位置参数形式的提示词，带首句续聊时会走 `kimi -r <id> -p '<提示词>'`。旧版 `kimi-cli` 的目录结构不同，未做支持，需要时用 `ASH_KIMI_DIR` 指向实际目录。
 
@@ -152,6 +155,17 @@ command = "/absolute/path/to/ash"
 args = ["mcp"]
 ```
 
+### Antigravity 2.0 / agy CLI
+
+桌面端与 `agy` 共用 `~/.gemini/config/mcp_config.json`，用 CLI 添加即可：
+
+```bash
+agy mcp add ai-session-hub -- "$HOME/.local/bin/ash" mcp
+agy mcp list   # 确认状态为 enabled
+```
+
+也可以手写 `mcp_config.json`，格式同下文“其他 MCP 客户端”。
+
 ### Kimi Code CLI
 
 写入 `~/.kimi-code/mcp.json`（项目级为 `<cwd>/.kimi-code/mcp.json`）：
@@ -239,6 +253,7 @@ MCP 客户端一旦获得访问权限，就可以读取索引中允许返回的�
 | `ASH_WORKBUDDY_DIR` | 覆盖 WorkBuddy 的 `projects` 目录；设置后只使用该目录 |
 | `ASH_GEMINI_DIR` | 覆盖 Gemini 临时目录 |
 | `ASH_OPENCODE_DB` | 覆盖 OpenCode SQLite 数据库路径 |
+| `ASH_ANTIGRAVITY_DIR` | 覆盖 Antigravity 数据根目录（默认 `~/.gemini/antigravity`） |
 | `ASH_<TOOL>_BIN` | 覆盖生成命令时使用的可执行文件，如 `ASH_WORKBUDDY_BIN`、`ASH_KIMI_BIN`、`ASH_KIRO_IDE_BIN` |
 | `ASH_INDEX_TOOL_RESULTS` | 设为 `1` 后将工具结果加入全文检索 |
 
@@ -253,7 +268,7 @@ ash sync --full
 ## 设计说明
 
 - 中文检索使用 SQLite FTS5 `trigram`；少于 3 个字符的查询退化为 `LIKE`。
-- Claude、Codex、Kiro CLI、Kimi Code CLI、pi、WorkBuddy 使用字节偏移增量读取，只消费以换行结尾的完整 JSONL 行。
+- Claude、Codex、Kiro CLI、Kimi Code CLI、pi、WorkBuddy、Antigravity 使用字节偏移增量读取，只消费以换行结尾的完整 JSONL 行。
 - Kiro IDE、Gemini 和 OpenCode 使用全量解析，因为其源文件或数据库可能整体更新。
 - 会话内容统一裁剪：普通文本最多 24,000 字符，工具调用最多 600 字符，工具结果最多 1,200 字符。
 - 摘要是规则化抽取，不调用模型；摘要结果仍应由使用方自行核实，不能当作事实审计结论。
@@ -294,7 +309,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 
 ## 商标与免责声明
 
-本项目是独立的第三方工具，与 Anthropic、OpenAI、Amazon、Google、Moonshot AI、腾讯、OpenCode 及其他任何厂商均无隶属、赞助或背书关系。Claude、Claude Code、Codex、Kiro、Kimi、Kimi Code、pi、WorkBuddy、CodeBuddy、Gemini、OpenCode 等名称与标识归各自权利人所有，本文中仅用于说明本工具所兼容的会话来源。
+本项目是独立的第三方工具，与 Anthropic、OpenAI、Amazon、Google、Moonshot AI、腾讯、OpenCode 及其他任何厂商均无隶属、赞助或背书关系。Claude、Claude Code、Codex、Kiro、Kimi、Kimi Code、pi、WorkBuddy、CodeBuddy、Gemini、OpenCode、Antigravity 等名称与标识归各自权利人所有，本文中仅用于说明本工具所兼容的会话来源。
 
 本项目只读取运行它的机器上本地已有的会话文件，不修改、不上传、不再分发任何第三方软件的代码或数据。使用者需自行确认对所读取数据拥有相应权限，并遵守所用 AI 工具的服务条款以及所在组织的数据管理规定。
 
